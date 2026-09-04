@@ -1,0 +1,8 @@
+{
+  "id": "50-charcoal-from-peat",
+  "order": 50,
+  "author": "this port",
+  "kind": "content",
+  "requires": ["40-items-and-recipes"],
+  "affectsSaves": true
+}
