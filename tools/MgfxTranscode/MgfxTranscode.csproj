@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Rewrites the game's MGFX v8 effect containers (MonoGame 3.6) as MGFX v10
+       (MonoGame 3.8.2+). Deliberately has NO MonoGame reference: it is pure byte
+       surgery on the container, so it cannot be perturbed by MonoGame API changes. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>mgfxtranscode</AssemblyName>
+    <RootNamespace>UW.Tools.MgfxTranscode</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>

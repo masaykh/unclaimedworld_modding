@@ -1,0 +1,12 @@
+# Patches are byte-sensitive: they are generated from LF text and matched against an LF-
+# normalised decompile. Git's autocrlf would rewrite them on checkout and every hunk would be
+# compared against the wrong bytes. Both appliers tolerate CRLF, but there is no reason to
+# hand them the problem.
+*.patch   text eol=lf
+*.deleted text eol=lf
+
+# Shell scripts must stay LF or sh will not run them.
+*.sh      text eol=lf
+
+# Everything else can normalise.
+*         text=auto

@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Headless content-load probe. Loads named assets through a real MonoGame ContentManager and
+    reports pass/fail per asset, so content problems can be diagnosed without driving the game's
+    UI. It creates a real GraphicsDevice because Texture2D/Effect/Model readers need one.
+
+    It MUST reference the same support assemblies as the game: XNB files name their readers by
+    assembly-qualified name, so SpriteSheetRuntime and Xclna.Xna.Animationx86 have to be
+    loadable by those exact names for the reflective and model readers to resolve.
+
+    Build with -p:UwPlatform=GL for the DesktopGL flavour. That is not cosmetic: MGFX effects
+    are profile-specific and Effect.ReadHeader throws "This MGFX effect was built for a
+    different platform!" on a mismatch, so the OpenGL-profile effects produced by
+    build/33-convert-effects-to-gl.sh can ONLY be verified by a DesktopGL probe. Program.cs is
+    platform-neutral - it drives a Game/GraphicsDeviceManager and touches no WinForms - so the
+    switch is entirely in this file.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>contentprobe</AssemblyName>
+    <RootNamespace>UW.Tools.ContentProbe</RootNamespace>
+    <Nullable>enable</Nullable>
+    <UwPlatform Condition="'$(UwPlatform)' == ''">DX</UwPlatform>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(UwPlatform)' == 'DX'">
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(UwPlatform)' == 'GL'">
+    <TargetFramework>net8.0</TargetFramework>
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <!-- Keeps the two flavours' outputs apart, so a GL probe never runs against DX binaries. -->
+  <PropertyGroup>
+    <ArtifactsPivots>$(Configuration.ToLowerInvariant())_$(UwPlatform.ToLowerInvariant())</ArtifactsPivots>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UwPlatform)' == 'DX'">
+    <PackageReference Include="MonoGame.Framework.WindowsDX" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UwPlatform)' == 'GL'">
+    <PackageReference Include="MonoGame.Framework.DesktopGL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SpriteSheetRuntime\SpriteSheetRuntime.csproj" />
+    <ProjectReference Include="..\..\src\AnimationComponentRuntime\AnimationComponentRuntime.csproj" />
+    <ProjectReference Include="..\..\src\WindowSystem\WindowSystem.csproj" />
+  </ItemGroup>
+
+  <!--
+    The BUILT game, referenced as an assembly rather than a project, so that probing the menu
+    animation uses the game's own UWGame.Port.MenuAnimation parser instead of a reimplementation
+    that could silently drift from it. Same reasoning and same pattern as tools/DataExport.
+
+    Optional on purpose: this tool's main job is loading content, and it must stay usable before
+    the game has been built. When UnclaimedWorld.dll is absent the animation probe compiles out
+    (UW_HAVE_GAME), and everything else still works.
+  -->
+  <PropertyGroup>
+    <UwGameBin Condition="'$(UwGameBin)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\bin\UnclaimedWorld\release_dx</UwGameBin>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(UwGameBin)\UnclaimedWorld.dll')">
+    <Reference Include="UnclaimedWorld">
+      <HintPath>$(UwGameBin)\UnclaimedWorld.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <PropertyGroup Condition="Exists('$(UwGameBin)\UnclaimedWorld.dll')">
+    <DefineConstants>$(DefineConstants);UW_HAVE_GAME</DefineConstants>
+  </PropertyGroup>
+</Project>

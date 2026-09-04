@@ -1,0 +1,8 @@
+# SHA-256 of the assemblies this kit's patches were generated against.
+# build-port.ps1 checks these before decompiling anything.
+74544368068f2859a0f1f7f1c2c433ad78775f121ba50c76db3fa63f2654b5c6  UnclaimedWorld.exe
+ed768710ca686a460aea83118571c30fc2779731f78bf276946c5b973cbfb79c  WindowSystem.dll
+8d9fd7f55e957404453ef9ffd82316fe08ca1c200285e8e879ab4651386ba897  RoundLines.dll
+c337d3e0fe8f72b49c6a068ed84f5d06b9ccd8669189712f2ce4d56ea29c5322  InputEventSystem.dll
+efde56d48f39761612c5c2b246d310ea79ef06ea5d78e52620eefe96c8532c74  SpriteSheetRuntime.dll
+44308455cede3be78c4afcf0f6ff8a638464b287ed46680c55e8af51b9eed62b  Xclna.Xna.Animationx86.dll

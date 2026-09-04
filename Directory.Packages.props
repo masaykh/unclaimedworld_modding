@@ -1,0 +1,112 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!--
+      Enabled so the SharpDX versions below actually take effect. They arrive only as MonoGame's
+      transitive dependencies, and without transitive pinning a PackageVersion for a package no
+      project references directly is silently ignored.
+    -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+
+    <!--
+      3.8.5.1 is the current release and the one to be on. It is not a cosmetic bump: its
+      mgfxc fixed a bug in MonoGame's MojoShader fork that rejected every `if (boolUniform)`
+      in a Shader Model 3 shader ("IF src0 must have replicate swizzle" - see PORTING-NOTES.md).
+      3.8.2, 3.8.3 and 3.8.4.1 all carry that bug, which made SM3 look unusable for the
+      DesktopGL target when it is not.
+
+      MGFX container versions across releases, read from Effect.ReadHeader:
+        3.8.2.1105        MGFXVersion 10, no MGFXMinVersion  -> accepts exactly 10
+        3.8.3 / 3.8.4.1   MGFXVersion 10, no MGFXMinVersion  -> accepts exactly 10
+        3.8.5.x           MGFXVersion 11, MGFXMinVersion 10  -> accepts 10 AND 11
+
+      So tools/MgfxTranscode deliberately still targets v10: it is the only version accepted
+      by every 3.8.2+ runtime, which keeps the transcoded effects portable across all of them.
+      mgfxc 3.8.5.1 EMITS v11, which a 3.8.2 runtime would reject - so the tool version in
+      .config/dotnet-tools.json and this runtime pin must move together.
+    -->
+    <MonoGameVersion>3.8.5.1</MonoGameVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="MonoGame.Framework.WindowsDX" Version="$(MonoGameVersion)" />
+    <PackageVersion Include="MonoGame.Framework.DesktopGL" Version="$(MonoGameVersion)" />
+    <PackageVersion Include="MonoGame.Content.Builder.Task" Version="$(MonoGameVersion)" />
+    <PackageVersion Include="Steamworks.NET" Version="2024.8.0" />
+    <PackageVersion Include="Mono.Cecil" Version="0.11.6" />
+
+    <!--
+      HarmonyLib - the runtime patching framework the mod loader is built on.
+
+      This version is part of the port's public API in a way most packages are not: mods compile
+      against 0Harmony.dll and the game ships exactly one copy of it, because two Harmony
+      instances patching the same methods from different assemblies is a debugging nightmare. So
+      raising this can break already-built third-party mods, and it should move deliberately and
+      be noted in MODDING.md when it does.
+
+      Unlike the SharpDX pin above, this one is safe to verify: the game references Harmony
+      directly, so an API break is a compile error rather than a startup TypeLoadException. It is
+      still checked at runtime - tools/DataExport loads a real mod through the loader and asserts
+      the patch took effect, which is what proves Harmony works on .NET 8 at all.
+    -->
+    <PackageVersion Include="Lib.Harmony" Version="2.4.2" />
+
+    <!--
+      SharpDX, pinned to EXACTLY what MonoGame asks for. Do not raise it.
+
+      MonoGame.Framework.WindowsDX 3.8.5.1 depends on SharpDX 4.0.1 across seven packages. The
+      game itself references none of them - the dependency is entirely inside MonoGame's
+      WindowsDX backend.
+
+      4.2.0 is the last release SharpDX made, and pinning forward to it looked free. It is not:
+      SharpDX changed an interface that MonoGame's own `Callback` type implements, so the
+      already-compiled MonoGame.Framework no longer satisfies it and the game dies at startup
+      with
+
+          The type initializer for 'Microsoft.Xna.Framework.Media.MediaPlayer' threw an exception
+          Method 'QueryInterface' in type 'Callback' from assembly 'MonoGame.Framework' does not
+          have an implementation
+
+      from MediaPlayer's static constructor, by way of AudioManager's. Raising a transitive
+      dependency that a PRECOMPILED assembly implements interfaces from is only safe if that
+      assembly is rebuilt against it, which would mean forking MonoGame.
+
+      Nothing caught this at build time - the game does not reference SharpDX, so there is no
+      compile-time check - and the asset probe passed clean, because loading content never
+      touches MediaFoundation. It took launching the game. ContentProbe now reads
+      MediaPlayer.State up front for exactly this reason (ProbeMediaSubsystem), so the failure
+      is a nonzero exit code rather than a crash report from a modder; that check is confirmed
+      to fail on 4.2.0 and pass on 4.0.1.
+
+      These pins are therefore a guard, not an upgrade: they hold the version MonoGame was
+      built against even if some other package tries to pull a newer one in.
+    -->
+    <PackageVersion Include="SharpDX" Version="4.0.1" />
+    <PackageVersion Include="SharpDX.DXGI" Version="4.0.1" />
+    <PackageVersion Include="SharpDX.Direct2D1" Version="4.0.1" />
+    <PackageVersion Include="SharpDX.Direct3D11" Version="4.0.1" />
+    <PackageVersion Include="SharpDX.MediaFoundation" Version="4.0.1" />
+    <PackageVersion Include="SharpDX.XAudio2" Version="4.0.1" />
+    <PackageVersion Include="SharpDX.XInput" Version="4.0.1" />
+
+    <!--
+      TOOL-ONLY as of PORT DEVIATION 12. The game no longer references this at all.
+
+      CustomXmlSerializer used to generate its XML-proxy types at runtime with CodeDom, and
+      referencing this package was what let that code compile on both targets - on .NET
+      Framework the types were in the BCL, on .NET 8 they are type-forwarded here. The proxies
+      are now generated at build time by tools/XmlProxyGen, which owns the whole CodeDom half
+      (tools/XmlProxyGen/ProxyCodeGenerator.cs is the game's former generator, moved).
+
+      Worth keeping straight: the package provides code GENERATION only. CompileAssemblyFromDom
+      throws PlatformNotSupportedException on .NET Core and later, which is exactly why the
+      runtime path had to go. Moving rather than merely bypassing it matters most to DesktopGL:
+      that target builds as net8.0, where this is a real package, whereas WindowsDX's
+      net8.0-windows gets System.CodeDom free from the Microsoft.WindowsDesktop.App framework.
+      Both publish outputs are now free of it - see PORTING-NOTES.md deviation 12.
+    -->
+    <PackageVersion Include="System.CodeDom" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

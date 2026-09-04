@@ -1,0 +1,78 @@
+<Project>
+
+  <!-- Chain to the repo root props. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!--
+    Platform selector.  Build with  -p:UwPlatform=GL  for the portable DesktopGL target.
+
+      DX (default) : net8.0-windows + MonoGame.Framework.WindowsDX.
+                     WinForms-hosted (WinFormsGameWindow / WinFormsGamePlatform, per the
+                     shipped Errors.txt crash log) and keeps the SM4_0_level_9_1 DXBC shader
+                     profile the transcoded MGFX v10 effects were compiled for
+                     (Shader.Profile == 1 == DirectX_11).
+      GL           : net8.0 + MonoGame.Framework.DesktopGL. Drops all nine SharpDX
+                     assemblies and WinForms. Requires the effects rebuilt for the OpenGL
+                     shader profile (Shader.Profile == 0) - Effect.ReadHeader throws
+                     "built for a different platform" on a mismatch, it is not a warning.
+
+    UW_GL / UW_DX are defined for the rare places that genuinely need to differ.
+  -->
+  <PropertyGroup>
+    <UwPlatform Condition="'$(UwPlatform)' == ''">DX</UwPlatform>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(UwPlatform)' == 'DX'">
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <DefineConstants>$(DefineConstants);UW_DX</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(UwPlatform)' == 'GL'">
+    <TargetFramework>net8.0</TargetFramework>
+    <UseWindowsForms>false</UseWindowsForms>
+    <DefineConstants>$(DefineConstants);UW_GL</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Keep DX and GL outputs apart. A single-TFM project does not include the TFM in the
+         artifacts pivot, so without this both targets publish into artifacts/*/debug and the
+         second overwrites the first - which risks deploying a GL build into game/. -->
+    <ArtifactsPivots>$(Configuration.ToLowerInvariant())_$(UwPlatform.ToLowerInvariant())</ArtifactsPivots>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+
+    <!--
+      HARD CONSTRAINT - assembly identity must not drift.
+      XNB files embed assembly-qualified reader type names. MonoGame's ContentTypeReaderManager
+      normalizes Microsoft.Xna.Framework.* / MonoGame.Framework names but NOT third-party ones:
+        -  6 XNBs resolve "SpriteSheetRuntime.SpriteSheet, SpriteSheetRuntime"
+        - 47 model XNBs resolve
+          "Xclna.Xna.Animation.Content.AnimationReader, Xclna.Xna.Animationx86, Version=1.0.2.0"
+      So we keep each assembly's ORIGINAL decompiled Properties/AssemblyInfo.cs verbatim
+      (exact AssemblyVersion, Guid, Company, Copyright) and switch off SDK generation rather
+      than restating the identity in MSBuild, where a default could silently override it.
+      build/verify-identities.ps1 asserts the result against ref/original/.
+    -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>true</GenerateTargetFrameworkAttribute>
+
+    <!-- Originals were unsigned, neutral-culture. Keep both. -->
+    <SignAssembly>false</SignAssembly>
+    <AssemblyOriginatorKeyFile></AssemblyOriginatorKeyFile>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UwPlatform)' == 'DX'">
+    <PackageReference Include="MonoGame.Framework.WindowsDX" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UwPlatform)' == 'GL'">
+    <PackageReference Include="MonoGame.Framework.DesktopGL" />
+  </ItemGroup>
+
+  <!-- See src/Shared/AssemblyPlatform.cs. Windows-TFM builds only. -->
+  <ItemGroup Condition="$(TargetFramework.Contains('-windows'))">
+    <Compile Include="$(MSBuildThisFileDirectory)Shared/AssemblyPlatform.cs"
+             Link="Properties/AssemblyPlatform.cs" />
+  </ItemGroup>
+
+</Project>

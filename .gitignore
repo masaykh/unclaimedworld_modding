@@ -1,0 +1,7 @@
+# Everything the kit produces locally. None of it belongs in the repo: work/ holds a decompile
+# of the game, and port/ holds a built derivative of it.
+work/
+port/
+prereqs/
+*.log
+uwkit.exe

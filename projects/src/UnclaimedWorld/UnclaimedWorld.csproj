@@ -1,0 +1,182 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The game itself: 2170 types across 149 namespaces, including the Kensei dev console
+       (Kensei.Dev) which the studio compiled in statically rather than referencing.
+       Entry point is GameStateManagement.Program.Main. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>UnclaimedWorld</AssemblyName>
+    <RootNamespace>UWGame</RootNamespace>
+    <StartupObject>GameStateManagement.Program</StartupObject>
+
+    <!-- The shipped manifest carries an explicit comment that DPI-unaware mode makes
+         GraphicsAdapter.CurrentDisplayMode null and crashes. Keep dpiAware=true. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Conditional because app.ico is the STUDIO'S icon, extracted from their executable, and
+         so cannot be redistributed in the build-from-source kit. A build without it gets the
+         default .NET icon; a user who wants the original can extract it from their own
+         UnclaimedWorld.exe and drop it in beside this csproj. Setting the property
+         unconditionally made the kit's build fail on a missing file instead. -->
+    <ApplicationIcon Condition="Exists('app.ico')">app.ico</ApplicationIcon>
+
+    <!-- WFAC010 tells us to drop dpiAware from the manifest and call Application.SetHighDpiMode
+         instead. We deliberately keep it in the manifest: the shipped manifest carries the
+         studio comment "Needed to prevent crash/DisplayMode being null", DPI awareness must be
+         established before the first window exists, and MonoGame's WinForms platform creates
+         its window during Game construction. Manifest-declared awareness is applied by the OS at
+         process start, which is strictly earlier and more reliable than the API call. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    SELECTABLE FEATURES.  -p:UwFeatures="harmony;unhiddenmod"
+
+    Build-time rather than runtime for the two that pull in code the user may not want in their
+    process at all: the Harmony mod loader (which loads third-party assemblies) and the bundled
+    Unhidden Mod (which changes simulation content, and therefore save compatibility). Leaving a
+    feature out means its code is not compiled in, not merely disabled - which is the honest
+    meaning of "I did not install that".
+
+    Default is both ON, matching the archives. The installer in kit/ passes this explicitly.
+
+    Deliberately NOT a feature: the menu animation. It needs no code fork, because the game
+    already treats a missing MainMenuIntro.uwanim as "use the still background". So whether the
+    animation exists is a question of whether the installer generates the file - one code path,
+    no VideoPlayer to bring back, and no way for the choice to reintroduce the three crashes
+    that removing VideoPlayer fixed (PORT DEVIATIONS 5, 7, 11).
+  -->
+  <!--
+    THE INTERFACE IS TWO BOOLEANS, not a list:
+
+        dotnet build ... -p:UwHarmony=true -p:UwUnhiddenMod=false
+
+    A list property cannot be passed safely through the dotnet CLI. Both separators are taken
+    by the CLI itself - `-p:UwFeatures="harmony;unhiddenmod"` and the comma form both fail with
+    "MSBUILD : error MSB1006: Property is not valid", because ; and , delimit properties at that
+    level. Only %3B-escaping survives, which is not something to ask an installer script - or a
+    human - to remember. Two booleans need no escaping and cannot be silently mangled.
+
+    UwFeatures is still accepted as a convenience for human use, e.g. -p:UwFeatures=harmony to
+    get harmony only. When both are supplied the BOOLEAN WINS, because a command-line property
+    is a global one and MSBuild will not let the project reassign it.
+  -->
+  <PropertyGroup>
+    <UwHarmony Condition="'$(UwHarmony)' == ''">true</UwHarmony>
+    <UwUnhiddenMod Condition="'$(UwUnhiddenMod)' == ''">true</UwUnhiddenMod>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(UwFeatures)' != ''">
+    <UwFeatureList>;$(UwFeatures.ToLowerInvariant().Replace(' ',''));</UwFeatureList>
+    <UwHarmony>$(UwFeatureList.Contains(';harmony;'))</UwHarmony>
+    <UwUnhiddenMod>$(UwFeatureList.Contains(';unhiddenmod;'))</UwUnhiddenMod>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <DefineConstants Condition="'$(UwHarmony)' == 'true'">$(DefineConstants);UW_FEATURE_HARMONY</DefineConstants>
+    <DefineConstants Condition="'$(UwUnhiddenMod)' == 'true'">$(DefineConstants);UW_FEATURE_UNHIDDENMOD</DefineConstants>
+  </PropertyGroup>
+
+  <!--
+    Exactly one implementation of each feature is compiled. The *.Absent.cs files are no-op
+    stubs with a `const bool Enabled = false`, which keeps the game's own call sites - eleven of
+    them for the mod - byte-identical whether a feature is in or out. See the header comment in
+    UnhiddenMod.Absent.cs for why that is preferable to #if at each site.
+
+    The loader is the only thing that references HarmonyLib, so the two come and go together.
+  -->
+  <ItemGroup Condition="'$(UwHarmony)' == 'true'">
+    <Compile Remove="UWGame\Mods\ModLoader.Absent.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UwHarmony)' != 'true'">
+    <Compile Remove="UWGame\Mods\ModLoader.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UwUnhiddenMod)' == 'true'">
+    <Compile Remove="UWGame\Mods\UnhiddenMod.Absent.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UwUnhiddenMod)' != 'true'">
+    <Compile Remove="UWGame\Mods\UnhiddenMod.cs" />
+    <Compile Remove="UWGame\Mods\UnhiddenModSmithies.cs" />
+  </ItemGroup>
+
+  <Target Name="ReportUwFeatures" BeforeTargets="Build">
+    <Message Importance="high" Text="UwFeatures: harmony=$(UwHarmony) unhiddenmod=$(UwUnhiddenMod)" />
+  </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WindowSystem\WindowSystem.csproj" />
+    <ProjectReference Include="..\SpriteSheetRuntime\SpriteSheetRuntime.csproj" />
+    <ProjectReference Include="..\AnimationComponentRuntime\AnimationComponentRuntime.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Phase 6: modern Steamworks.NET P/Invokes steam_api64.dll's own flat API directly,
+         retiring the CSteamworks shim the shipped Steamworks.NET 7.0.0.0 depended on. -->
+    <PackageReference Include="Steamworks.NET" />
+  </ItemGroup>
+
+  <!-- HarmonyLib, the runtime patching framework mods use. Referenced by the game because the
+       game hosts the loader (UWGame.Mods.ModLoader) - it must be able to construct a Harmony
+       instance and call PatchAll on each mod assembly.
+
+       The game ships 0Harmony.dll and mods reference it WITHOUT shipping their own copy. Two
+       copies in one process means two sets of patch state over the same methods, which is the
+       classic way a mod stack breaks in ways nobody can debug. See MODDING.md.
+
+       Conditional so that a build without the harmony feature does not ship 0Harmony.dll at
+       all - 2.3 MB the user did not ask for, and a patching framework loaded into a process
+       that has nothing to patch. -->
+  <ItemGroup Condition="'$(UwHarmony)' == 'true'">
+    <PackageReference Include="Lib.Harmony" />
+  </ItemGroup>
+
+  <!--
+    MonoGame.Framework.WindowsDX's nuspec - unchanged from 3.8.2 through 3.8.5.1 - declares
+    dependencies on the legacy .NET Core 2.1 / netstandard1.x package graph:
+    Microsoft.NETCore.App 2.1.30 (which pulls
+    DotNetAppHost / DotNetHostPolicy / DotNetHostResolver 2.1.30 and Microsoft.NETCore.Jit
+    2.0.8), NETStandard.Library 2.0.3, ~35 System.* 4.3.0 packages, System.Net.Http 4.3.4 and
+    System.Security.Cryptography.X509Certificates 4.3.2. On net8.0 every one of those APIs
+    comes from the shared framework, so none of their assets are needed - but their NATIVE
+    assets still get copied next to the exe, which is not merely wasteful:
+
+      * the full api-ms-win-* CRT forwarder set plus ucrtbase.dll shadow the OS CRT;
+      * hostfxr.dll / hostpolicy.dll make the apphost load a .NET Core 2.1 hostpolicy that
+        cannot find CoreCLR ("Could not resolve CoreCLR path", exit 0x80008087) - see
+        build/40-deploy.sh;
+      * dbgshim / sos / sos_amd64_* / mscordaccore_* / mscorrc.debug are 2.1 diagnostics
+        binaries that a .NET 8 debugger must not pick up.
+
+    Filtering on the package path rather than on file names keeps this surgical: it drops
+    assets from microsoft.netcore.* only, and cannot touch MonoGame, SharpDX, Steamworks.NET
+    or our own projects. 47 files removed; verified by running the game afterwards.
+  -->
+  <Target Name="UwPruneLegacyNetCoreAssets"
+          AfterTargets="ResolveAssemblyReferences;ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths
+        Remove="@(ReferenceCopyLocalPaths)"
+        Condition="$([System.String]::Copy('%(Identity)').ToLowerInvariant().Contains('\microsoft.netcore.'))" />
+      <ResolvedFileToPublish
+        Remove="@(ResolvedFileToPublish)"
+        Condition="$([System.String]::Copy('%(Identity)').ToLowerInvariant().Contains('\microsoft.netcore.'))" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    Steamworks.NET is a RID-specific package and ships its managed assembly for six RIDs
+    (win-x64/x86, linux-x64/x86, osx-x64/x86). A portable publish copies all six under
+    runtimes/, 2.3 MB of which only win-x64 is ever loaded by the WindowsDX build. Dropped
+    for DX only: the DesktopGL build is meant to be portable, so it KEEPS every RID -
+    that is the whole point of it.
+  -->
+  <Target Name="UwPruneForeignRidAssets" AfterTargets="ComputeResolvedFilesToPublishList"
+          Condition="'$(UwPlatform)' == 'DX'">
+    <ItemGroup>
+      <ResolvedFileToPublish
+        Remove="@(ResolvedFileToPublish)"
+        Condition="$([System.String]::Copy('%(RelativePath)').Replace('\','/').StartsWith('runtimes/')) AND
+                   !$([System.String]::Copy('%(RelativePath)').Replace('\','/').StartsWith('runtimes/win-'))" />
+    </ItemGroup>
+  </Target>
+</Project>

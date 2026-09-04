@@ -1,0 +1,39 @@
+<Project>
+
+  <!-- Root properties: apply to every project in the repo (src/, tools/). -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+
+    <!--
+      Deterministic alone is not enough to make two machines produce the same bytes: the compiler
+      embeds ABSOLUTE source paths, so a build from C:\tools\unclaimedworld_fxna and one from a
+      kit unpacked elsewhere differ in every assembly. Measured - all four assemblies had
+      different hashes with Deterministic=true already set.
+
+      PathMap rewrites the build root to a fixed string, which is the same mechanism
+      DeterministicSourcePaths uses. PathMap is used directly because DeterministicSourcePaths
+      requires SourceRoot, which comes from source control - and the build-from-source kit's work
+      directory is not a repository, so it would fail there.
+
+      This is what lets a recipient of the kit verify they got the same binary we did.
+    -->
+    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!-- Decompiled code is noisy. Get it building first, clean it second. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS0108;CS0114;CS0162;CS0164;CS0168;CS0169;CS0219;CS0414;CS0618;CS0628;CS0649;CS0659;CS1717;CS1998;CS8305;SYSLIB0011;SYSLIB0012;SYSLIB0050;SYSLIB0051</NoWarn>
+
+    <!-- The shipped assemblies were unsigned; keep it that way (see identity table). -->
+    <SignAssembly>false</SignAssembly>
+
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
+  </PropertyGroup>
+
+</Project>

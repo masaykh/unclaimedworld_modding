@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The game's UI layer. Heavily modified fork of Aaron MacDougall's XNA WindowSystem GUI
+    toolkit (MS-PL): the game references 80 of its 128 public types across 6,370 call sites,
+    so it is game code wearing a library's name rather than a replaceable dependency.
+
+    Also contains what used to be two separate assemblies, InputEventSystem.dll and
+    RoundLines.dll. Merging them was safe because - unlike SpriteSheetRuntime and
+    Xclna.Xna.Animationx86 - NO XNB names either assembly, so no content reader resolves
+    through them (verified: 0 of 550 XNBs mention WindowSystem, InputEventSystem or
+    RoundLine). Their namespaces are unchanged (`InputEventSystem`, `RoundLineCode`), so
+    every `using` in the game still resolves; only the containing assembly differs.
+    WindowSystem was already the only real consumer of both.
+  -->
+  <PropertyGroup>
+    <AssemblyName>WindowSystem</AssemblyName>
+    <RootNamespace>WindowSystem</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SpriteSheetRuntime\SpriteSheetRuntime.csproj" />
+  </ItemGroup>
+</Project>

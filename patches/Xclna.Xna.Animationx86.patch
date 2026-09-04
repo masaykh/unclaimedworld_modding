@@ -1,0 +1,11 @@
+--- a/Properties/AssemblyInfo.cs
++++ b/Properties/AssemblyInfo.cs
+@@ -8,6 +8,6 @@
+ [assembly: AssemblyProduct("XNA Animation Library for Windows")]
+-[assembly: AssemblyDescription("")]
++[assembly: AssemblyTrademark("")]
+ [assembly: AssemblyCompany("XCLNA")]
+ [assembly: AssemblyCopyright("Copyright David Astle ©  2007")]
+-[assembly: AssemblyTrademark("")]
++[assembly: AssemblyDescription("")]
+ [assembly: ComVisible(false)]

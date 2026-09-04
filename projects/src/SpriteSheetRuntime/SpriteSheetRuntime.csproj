@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Fork of the Microsoft XNA "Sprite Sheet" sample runtime.
+       6 shipped XNBs deserialize these types via ReflectiveReader, so the assembly
+       name must stay "SpriteSheetRuntime" and the version 1.0.0.0. -->
+  <PropertyGroup>
+    <AssemblyName>SpriteSheetRuntime</AssemblyName>
+    <RootNamespace>SpriteSheetRuntime</RootNamespace>
+  </PropertyGroup>
+</Project>

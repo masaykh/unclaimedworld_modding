@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "ilspycmd": {
+      "version": "9.1.0.7988",
+      "commands": [
+        "ilspycmd"
+      ],
+      "rollForward": false
+    },
+    "dotnet-mgcb": {
+      "version": "3.8.5.1",
+      "commands": [
+        "mgcb"
+      ],
+      "rollForward": false
+    },
+    "dotnet-mgfxc": {
+      "version": "3.8.5.1",
+      "commands": [
+        "mgfxc"
+      ],
+      "rollForward": false
+    },
+    "dotnet-mgcb-editor": {
+      "version": "3.8.5.1",
+      "commands": [
+        "mgcb-editor"
+      ],
+      "rollForward": false
+    },
+    "dotnet-mgcb-editor-windows": {
+      "version": "3.8.5.1",
+      "commands": [
+        "mgcb-editor-windows"
+      ],
+      "rollForward": false
+    }
+  }
+}

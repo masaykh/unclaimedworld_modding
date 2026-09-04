@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Generates the XML serialization proxy types that CustomXmlSerializer used to emit at
+    runtime with CodeDom.
+
+    Why this tool has to exist: the retail game called
+    CodeDomProvider.CompileAssemblyFromDom() to compile a proxy class per proxied type on
+    first use. On .NET 8 that method throws PlatformNotSupportedException - runtime C#
+    compilation was removed from the framework, and System.CodeDom keeps only the code
+    GENERATION half. So the generation runs here, at build time, against the built game
+    assembly, and the result is compiled into the game like any other source file.
+
+    The generator deliberately reuses the game's own CustomXmlSerializer.GetProxyCode(), so
+    the emitted proxies are the same CodeDom output the retail build produced - not a
+    reimplementation. That matters because XmlSerializer runs over these proxies and their
+    shape decides the on-disk XML format of every data/ file.
+
+    This references the BUILT UnclaimedWorld.dll rather than the project, on purpose: a
+    project reference would be a build cycle, since the generator's output is compiled into
+    the very assembly it reflects over. build/20-generate-xml-proxies.sh sequences it.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>xmlproxygen</AssemblyName>
+    <RootNamespace>UW.Tools.XmlProxyGen</RootNamespace>
+    <!-- WFAC010: the game is DPI-aware via its app manifest, which this tool does not have
+         and does not need - it never creates a window. Same rationale as UnclaimedWorld.csproj. -->
+    <NoWarn>WFAC010</NoWarn>
+  </PropertyGroup>
+
+  <!-- ProxyCodeGenerator is the game's former CodeDom generator (PORT DEVIATION 12); the
+       dependency lives here now instead of in the shipped game. -->
+  <ItemGroup>
+    <PackageReference Include="System.CodeDom" />
+  </ItemGroup>
+
+  <!-- The game and the assemblies its public surface exposes. UwGameBin is set by
+       build/20-generate-xml-proxies.sh; the default keeps the tool buildable on its own. -->
+  <PropertyGroup>
+    <UwGameBin Condition="'$(UwGameBin)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\bin\UnclaimedWorld\release_dx</UwGameBin>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="UnclaimedWorld">
+      <HintPath>$(UwGameBin)\UnclaimedWorld.dll</HintPath>
+    </Reference>
+    <Reference Include="MonoGame.Framework">
+      <HintPath>$(UwGameBin)\MonoGame.Framework.dll</HintPath>
+    </Reference>
+    <Reference Include="SpriteSheetRuntime">
+      <HintPath>$(UwGameBin)\SpriteSheetRuntime.dll</HintPath>
+    </Reference>
+    <Reference Include="WindowSystem">
+      <HintPath>$(UwGameBin)\WindowSystem.dll</HintPath>
+    </Reference>
+    <Reference Include="Xclna.Xna.Animationx86">
+      <HintPath>$(UwGameBin)\Xclna.Xna.Animationx86.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

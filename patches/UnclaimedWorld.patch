@@ -1,0 +1,2636 @@
+--- a/GameStateManagement/Program.cs
++++ b/GameStateManagement/Program.cs
+@@ -1,4 +1,4 @@
+ using System;
+-using System.Windows.Forms;
+-using Microsoft.Win32;
++using UWGame.Port;
++using UWGame.SimSide;
+ 
+@@ -8,9 +8,117 @@
+ {
++	/// <summary>
++	/// PORT DEVIATION 13 (see PORTING-NOTES.md). Was <c>Main()</c>, with no arguments at all.
++	///
++	/// The game already contains a complete data export/import path: DataLoader wraps every one
++	/// of its ~80 hard-coded tables in <c>HandleDataTypeList</c> / <c>HandleDataTypeObject</c>,
++	/// which consult <see cref="Sim.CurrentSerializeMode"/> and will write each table out to
++	/// <c>data/BaseData/&lt;name&gt;.xml</c> and read it back. But
++	/// <c>Sim.CurrentSerializeMode</c> is initialised to <c>NoSerialize</c> and **nothing in
++	/// the shipped game ever assigns it**, so none of it runs and the folders stay empty. That
++	/// is why the retail install has a <c>data/BaseData</c> containing only Strings.
++	///
++	/// These two flags are the switch the studio never wired up. Default behaviour is
++	/// unchanged - no flags means <c>NoSerialize</c>, exactly as retail.
++	/// </summary>
++	private static bool ApplyDataFlags(string[] args)
++	{
++		foreach (string arg in args)
++		{
++			switch (arg)
++			{
++				case "--export-data":
++					// Writes every hard-coded table to data/BaseData/ (relative to the game
++					// folder - see Config.GetDataFolderPath) and then loads from those files,
++					// so what you get is the data the game actually ran with.
++					Sim.CurrentSerializeMode = Sim.SerializeMode.WriteAndRead;
++					Console.WriteLine("--export-data: writing the built-in data tables to data/BaseData/ and loading from them.");
++					break;
++
++				case "--data-from-xml":
++					// Skips the hard-coded initialisers and loads only what is on disk. This is
++					// the mode a data mod wants: edit the exported XML, then run with this.
++					Sim.CurrentSerializeMode = Sim.SerializeMode.Read;
++					Console.WriteLine("--data-from-xml: loading data tables from data/ only; built-in defaults skipped.");
++					break;
++
++				case "--help":
++				case "-h":
++				case "/?":
++					Console.WriteLine("UnclaimedWorld - .NET 8 / MonoGame port");
++					Console.WriteLine();
++					Console.WriteLine("  --export-data     Write the built-in data tables to data/BaseData/*.xml,");
++					Console.WriteLine("                    then load from them. Run this once to get editable copies.");
++					Console.WriteLine("  --data-from-xml   Load data tables from data/ only, ignoring the built-in");
++					Console.WriteLine("                    defaults. Use after editing the exported XML.");
++					Console.WriteLine("  -nomods           Run the stock game: the bundled Unhidden Mod off AND no");
++					Console.WriteLine("                    mods loaded from user/Mods. Saves made with mods on may");
++					Console.WriteLine("                    not load without them.");
++					Console.WriteLine();
++					Console.WriteLine("Data loading with no flags is exactly as retail: the built-in tables are");
++					Console.WriteLine("used and nothing under data/ is written or read.");
++					Console.WriteLine();
++					Console.WriteLine("This build BUNDLES the community Unhidden Mod, ON by default. For retail");
++					Console.WriteLine("behaviour in full, run with -nomods. See MODDING.md.");
++					return false;
++
++				// Anything else is ignored - Steam passes arguments of its own.
++			}
++		}
++		return true;
++	}
++
+ 	[STAThread]
+-	private static void Main()
++	private static void Main(string[] args)
+ 	{
+-		object value = Registry.GetValue("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Active Setup\\Installed Components\\{22d6f312-b0f6-11d0-94ab-0080c74c7e95}", "IsInstalled", null);
+-		if (value == null || value.ToString() != "1")
++		if (!ApplyDataFlags(args))
+ 		{
+-			MessageBox.Show("It appears that you don't have Windows Media Player installed. This game needs system features bound to Windows Media Player. Please install the Media Feature Pack corresponding to your Windows version to run this game:" + Environment.NewLine + Environment.NewLine + "Windows 7: http://www.microsoft.com/en-US/download/details.aspx?id=16546" + Environment.NewLine + Environment.NewLine + "Windows 8: http://www.microsoft.com/en-US/download/details.aspx?id=30685" + Environment.NewLine + Environment.NewLine + "Windows 8.1: http://www.microsoft.com/en-US/download/details.aspx?id=40744" + Environment.NewLine + Environment.NewLine + "Windows 10: https://www.microsoft.com/en-US/download/details.aspx?id=48231" + Environment.NewLine + Environment.NewLine + "Windows Vista & XP: http://www.microsoft.com/en-US/download/windows-media-player-details.aspx?id=8163", "Missing Windows Media Player", MessageBoxButtons.OK, MessageBoxIcon.Hand);
++			return;
++		}
++		// -nomods gives the stock game: it switches off both the bundled Unhidden Mod and the
++		// third-party mod loader. Parsed before anything else because content hooks and Harmony
++		// patches on the data loaders run during data loading, which starts inside the
++		// UnclaimedWorld constructor below - after that it is too late to switch off.
++		foreach (string arg in args)
++		{
++			if (string.Equals(arg, "-nomods", StringComparison.OrdinalIgnoreCase))
++			{
++				UWGame.Mods.UnhiddenMod.Disable();
++				UWGame.Mods.ModLoader.Disable();
++			}
++		}
++		if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			UWGame.Mods.UnhiddenMod.ApplyCulture();
++		}
++
++		// Third-party mods from user/Mods. Before the game object is constructed, so a mod can
++		// patch anything the game does on the way up - including the data loaders, which run
++		// during the first scenario load. Failures are per-mod and reported to Errors.txt.
++		UWGame.Mods.ModLoader.LoadAll(UnclaimedWorld.LogError);
++		// PORT DEVIATION 10 (see PORTING-NOTES.md). Was an inline HKEY_LOCAL_MACHINE probe for
++		// Windows Media Player followed by a WinForms MessageBox listing per-Windows-version
++		// Media Feature Pack download links. Moved behind PlatformWindow so the OpenGL backend,
++		// which does not use MediaFoundation at all, does not gate startup on a Windows
++		// registry key. The original's five download URLs are all long dead, so the message
++		// now points at Microsoft's current Media Feature Pack support page instead.
++		string codecProblem = PlatformWindow.CheckMediaCodecsAvailable();
++		if (codecProblem != null)
++		{
++			PlatformWindow.ShowErrorDialog(IntPtr.Zero, codecProblem, "Missing Windows Media Player");
++			return;
++		}
++
++		// PORT DEVIATION 18 (see PORTING-NOTES.md). Reports up front, and in words that say what
++		// to do, when the shaders this installation would load are still the shipped MGFX v8 -
++		// which happens when the binaries were copied by hand without port-content\.
++		//
++		// Otherwise MonoGame raises "This MGFX effect is for an older release of MonoGame" from
++		// inside content loading, naming no file and offering no remedy, several screens in.
++		//
++		// It resolves the effect the way UwContentManager does, override first, so a correct
++		// installation - whose Content\ shaders are deliberately still v8 - does not trip it.
++		string effectProblem = EffectVersionCheck.Check();
++		if (effectProblem != null)
++		{
++			PlatformWindow.ShowErrorDialog(IntPtr.Zero, effectProblem, "Shaders not set up");
+ 			return;
+@@ -19,2 +127,6 @@
+ 		unclaimedWorld.Exiting += game_Exiting;
++		// NOTE: game 1.0.4.8 DELETED the target-monitor placement that used to be here, so the
++		// port follows it and no longer calls PlatformWindow.PlaceWindowOnMonitor. The helper is
++		// kept (PORT DEVIATION 10 still covers the codec dialog above), so restoring the
++		// behaviour is one line if Options.TargetMonitorNumber is wanted back.
+ 		try
+@@ -29,2 +141,6 @@
+ 
++	// NOTE: `windowForm_Load` used to sit here - 13 lines of WinForms that positioned the
++	// window on `Screen.AllScreens[1]` with a hardcoded monitor index of 2. It had no
++	// subscribers at all, so it never ran. Removed with the rest of the WinForms surface.
++
+ 	private static void game_Exiting(object sender, EventArgs e)
+--- a/GameStateManagement/UnclaimedWorld.cs
++++ b/GameStateManagement/UnclaimedWorld.cs
+@@ -6,3 +6,3 @@
+ using System.Threading;
+-using System.Windows.Forms;
++using UWGame.Port;
+ using Microsoft.Xna.Framework;
+@@ -17,14 +17,2 @@
+ {
+-	public class WindowHandle : IWin32Window
+-	{
+-		private IntPtr _hwnd;
+-
+-		public IntPtr Handle => _hwnd;
+-
+-		public WindowHandle(IntPtr handle)
+-		{
+-			_hwnd = handle;
+-		}
+-	}
+-
+ 	public GraphicsDeviceManager GraphicsDeviceManager;
+@@ -91,3 +79,18 @@
+ 	{
+-		base.Content.RootDirectory = "Content";
++		// PORT DEVIATION 18 (see PORTING-NOTES.md). Was `base.Content.RootDirectory = "Content";`
++		// on MonoGame's built-in ContentManager.
++		//
++		// Game.Content is replaced with UwContentManager so that EVERY load goes through the
++		// port's manager, which prefers port-content\ over Content\. It has to be this one:
++		// game.Content is what BloomComponent and DisplayPanelRenderer load their effects with,
++		// so leaving it as the stock manager would mean the converted effects were ignored on
++		// exactly the assets that need them - and that is the crash path,
++		// DisplayPanelRenderer.LoadContent -> "This MGFX effect is for an older release".
++		//
++		// The other five construction sites already used UwContentManager (deviation 14); this
++		// is the sixth and last, and the only one the game creates for itself.
++		base.Content = new UWGame.Port.UwContentManager(Services)
++		{
++			RootDirectory = "Content"
++		};
+ 		_ = GraphicsAdapter.DefaultAdapter.SupportedDisplayModes;
+@@ -121,4 +124,5 @@
+ 				}
+-				Form form = (Form)System.Windows.Forms.Control.FromHandle(base.Window.Handle);
+-				string text = string.Format("IsActive: {0}, TopMost: {1}, Focused: {2}, ContainsFocus: {3}" + Environment.NewLine, base.IsActive, form.TopMost, form.Focused, form.ContainsFocus);
++				// PORT DEVIATION 10: was Control.FromHandle(...) cast to a WinForms Form purely to
++				// report its focus chain. See UWGame/Port/PlatformWindow.cs.
++				string text = PlatformWindow.DescribeFocus(base.Window.Handle, base.IsActive);
+ 				if (num == 5)
+@@ -133,8 +137,8 @@
+ 					{
+-						string text2 = string.Format("IsActive: {0}, TopMost: {1}" + Environment.NewLine, base.IsActive, form.TopMost);
+-						text2 = text2 + "The game failed to start in fullscreen mode (DXGI_ERROR_NOT_CURRENTLY_AVAILABLE). This may be because the game window is out of focus." + Environment.NewLine + "You can try again, or you can switch to windowed mode instead, by changing the FullScreen property to False in Options.xml (this file can be found in the Documents/Unclaimed World folder.)" + Environment.NewLine + Environment.NewLine + "If you need more help, press Ctrl-C to copy this text and then paste it into the Steam forum.";
+-						throw new UWException(text2, ex)
+-						{
+-							IncludePasteInstructions = false
+-						};
++						string text3 = PlatformWindow.DescribeFocus(base.Window.Handle, base.IsActive);
++						string text4 = text3;
++						text3 = text4 + "The game failed to start in fullscreen mode (DXGI_ERROR_NOT_CURRENTLY_AVAILABLE). This may be because the game window is out of focus." + Environment.NewLine + "You can try again, or you can switch to windowed mode instead, by changing the FullScreen property to False in Options.xml (this file can be found in the Documents/Unclaimed World folder.)" + Environment.NewLine + Environment.NewLine + "If you need more help, press Ctrl-C to copy this text and then paste it into the Steam forum.";
++						UWException ex2 = new UWException(text3, ex);
++						ex2.IncludePasteInstructions = false;
++						throw ex2;
+ 					}
+@@ -143,4 +147,3 @@
+ 					Thread.Sleep(100);
+-					form.TopMost = true;
+-					form.BringToFront();
++					PlatformWindow.BringToFront(base.Window.Handle);
+ 				}
+@@ -179,11 +182,6 @@
+ 		SetWindowSize(width - 30, height - 50);
+-		Form form = System.Windows.Forms.Control.FromHandle(base.Window.Handle).FindForm();
+-		if (borderLess)
+-		{
+-			form.FormBorderStyle = FormBorderStyle.None;
+-		}
+-		else
+-		{
+-			form.FormBorderStyle = FormBorderStyle.Fixed3D;
+-		}
++		// PORT DEVIATION 10: was Control.FromHandle(handle).FindForm().FormBorderStyle =
++		// FormBorderStyle.None / Fixed3D. MonoGame exposes this directly and supports it on both
++		// WindowsDX and DesktopGL, so this needs no platform split at all.
++		base.Window.IsBorderless = borderLess;
+ 		if (GraphicsDeviceManager.IsFullScreen)
+@@ -202,8 +200,32 @@
+ 	{
++		// PORT DEVIATION 6 (see PORTING-NOTES.md).
++		// Two changes, both diagnostics-only - the crash reporter used to destroy its own
++		// crash report:
++		//
++		//  (a) SetScreenResolution is now guarded. It reads Window.Handle, and if the game is
++		//      already tearing down, WinFormsGameForm is disposed and Control.CreateHandle
++		//      throws ObjectDisposedException. That escaped HandleExceptionInReleaseMode
++		//      entirely, so the ORIGINAL exception `e` was never logged or shown - the process
++		//      died reporting the reporter's failure instead. Observed for real on .NET 8.
++		//  (b) LogError is now called BEFORE the MessageBox instead of after. The box is modal,
++		//      so on an unattended run (or when it cannot be shown) nothing was ever written to
++		//      Errors.txt. Logging first means the report survives regardless.
++		//
++		// Neither changes what the player sees when the dialog does appear.
++		string title = GetTitle(e);
++		string text = GetErrorMessage(e);
++		LogError(text, title);
++
+ 		if (isMainThread)
+ 		{
+-			SetScreenResolution(useFullscreen: false, borderLess: false, hardwareModeSwitch: false, 1024, 768);
++			try
++			{
++				SetScreenResolution(useFullscreen: false, borderLess: false, hardwareModeSwitch: false, 1024, 768);
++			}
++			catch (Exception resizeFailure)
++			{
++				LogError("Could not restore a windowed resolution before reporting the error above: "
++					+ resizeFailure.Message, title);
++			}
+ 		}
+-		string title = GetTitle(e);
+-		string text = GetErrorMessage(e);
+ 		if (isMainThread)
+@@ -213,3 +235,3 @@
+ 				string pasteInstructions = GetPasteInstructions(e);
+-				MessageBox.Show(new WindowHandle(base.Window.Handle), pasteInstructions + text, title, MessageBoxButtons.OK, MessageBoxIcon.Hand);
++				PlatformWindow.ShowErrorDialog(base.Window.Handle, pasteInstructions + text, title);
+ 			}
+@@ -222,5 +244,6 @@
+ 				text += ex.StackTrace;
++				// The original report is already in Errors.txt; record why the dialog failed too.
++				LogError(text, title);
+ 			}
+ 		}
+-		LogError(text, title);
+ 		throw e;
+--- a/Kensei/Dev/Command.cs
++++ b/Kensei/Dev/Command.cs
+@@ -3,4 +3,2 @@
+ using System.Collections.Generic;
+-using System.Drawing;
+-using System.Windows.Forms;
+ using Microsoft.Xna.Framework;
+@@ -28,133 +26,28 @@
+ 
+-	private class CommandForm : Form
+-	{
+-		private static readonly int InitialWidth = 320;
+-
+-		private static readonly int InitialHeight = 450;
+-
+-		private Button m_button = new Button();
++	// PORT DEVIATION 8 (see PORTING-NOTES.md).
++	// The 133-line `private class CommandForm : Form` that used to live here is replaced by
++	// this inert stub, and DoModelessDialog below no longer constructs it.
++	//
++	// Unlike the Options panel, this one WAS reachable in the shipped game, and badly so:
++	// Manager.Update runs every frame from Client.cs, calls Command.Update(keyboard), and
++	// s_activateKey is Keys.OemPipe - so pressing "\" in a retail build opened a Win32
++	// console window over the game. Worse, s_lastKeyboard is assigned once and never updated,
++	// so the edge-detect `IsKeyDown(key) && !s_lastKeyboard.IsKeyDown(key)` is permanently
++	// true: HOLDING "\" disposed and re-constructed a Form every single frame. And the window
++	// was useless anyway - Command.Initialise, which registers help/cls/exit/collectGarbage,
++	// has zero callers, so every command answered "Error: unknown command".
++	//
++	// Removing it fixes that retail defect and takes the last WinForms dependency out of
++	// Kensei.Dev. The public API is unchanged, so no call site moves.
++	private sealed class CommandForm
++	{
++		internal void Print(string message) { }
+ 
+-		private TextBox m_commandLine = new TextBox();
++		internal void SetInput(string input) { }
+ 
+-		private TextBox m_commandOutput = new TextBox();
+-
+-		internal CommandForm()
+-		{
+-			base.Width = InitialWidth;
+-			base.Height = InitialHeight;
+-			SuspendLayout();
+-			m_button.SuspendLayout();
+-			m_button.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+-			m_button.Dock = DockStyle.None;
+-			m_button.Text = "OK";
+-			m_button.Size = m_button.PreferredSize;
+-			m_button.Location = new System.Drawing.Point(base.ClientSize.Width - m_button.Width, base.ClientSize.Height - m_button.Height);
+-			m_button.Click += Form_CommandEntered;
+-			m_button.ResumeLayout(performLayout: false);
+-			base.Controls.Add(m_button);
+-			m_commandLine.SuspendLayout();
+-			m_commandLine.AcceptsReturn = false;
+-			m_commandLine.AcceptsTab = false;
+-			m_commandLine.AllowDrop = true;
+-			m_commandLine.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+-			m_commandLine.Dock = DockStyle.None;
+-			m_commandLine.Location = new System.Drawing.Point(0, base.ClientSize.Height - m_commandLine.Height);
+-			m_commandLine.Multiline = false;
+-			m_commandLine.ReadOnly = false;
+-			m_commandLine.ScrollBars = ScrollBars.None;
+-			m_commandLine.WordWrap = false;
+-			m_commandLine.Width = base.ClientSize.Width - m_button.Width;
+-			m_commandLine.KeyDown += Input_KeyDown;
+-			m_commandLine.ResumeLayout(performLayout: false);
+-			base.Controls.Add(m_commandLine);
+-			m_commandOutput.SuspendLayout();
+-			m_commandOutput.AcceptsReturn = false;
+-			m_commandOutput.AcceptsTab = false;
+-			m_commandOutput.AllowDrop = false;
+-			m_commandOutput.Anchor = AnchorStyles.Top;
+-			m_commandOutput.Dock = DockStyle.Top;
+-			m_commandOutput.Multiline = true;
+-			m_commandOutput.ReadOnly = true;
+-			m_commandOutput.ScrollBars = ScrollBars.Vertical;
+-			m_commandOutput.WordWrap = true;
+-			m_commandOutput.ResumeLayout(performLayout: false);
+-			m_commandOutput.Height = base.ClientSize.Height - m_button.Height;
+-			m_commandOutput.Width = base.ClientSize.Width;
+-			base.Controls.Add(m_commandOutput);
+-			foreach (string item in s_output)
+-			{
+-				Print(item);
+-			}
+-			base.Name = "DevCommand";
+-			Text = "Dev Command";
+-			base.ClientSizeChanged += Form_ClientSizeChanged;
+-			ResumeLayout(performLayout: false);
+-		}
+-
+-		protected override void Dispose(bool disposing)
+-		{
+-			base.Dispose(disposing);
+-		}
++		internal void Cls() { }
+ 
+-		internal void Print(string text)
+-		{
+-			m_commandOutput.Text += text.Replace("\n", "\r\n");
+-			if (!m_commandOutput.Text.EndsWith("\r\n"))
+-			{
+-				m_commandOutput.Text += "\r\n";
+-			}
+-			m_commandOutput.SelectionStart = m_commandOutput.Text.Length;
+-			m_commandOutput.SelectionLength = 0;
+-			m_commandOutput.ScrollToCaret();
+-		}
+-
+-		internal void Cls()
+-		{
+-			m_commandOutput.Clear();
+-			m_commandOutput.ScrollToCaret();
+-		}
+-
+-		internal void SetInput(string input)
+-		{
+-			m_commandLine.Text = input;
+-		}
++		internal void Show() { }
+ 
+-		private void Form_ClientSizeChanged(object sender, EventArgs e)
+-		{
+-			CommandForm commandForm = (CommandForm)sender;
+-			commandForm.m_commandLine.Width = commandForm.ClientSize.Width - m_button.Width;
+-			commandForm.m_commandOutput.Height = commandForm.ClientSize.Height - commandForm.m_commandLine.Height;
+-			commandForm.m_commandOutput.Width = commandForm.ClientSize.Width;
+-			m_commandOutput.ScrollToCaret();
+-		}
+-
+-		private void Form_CommandEntered(object sender, EventArgs e)
+-		{
+-			CommandForm obj = (CommandForm)((Button)sender).Parent;
+-			ProcessCommand(obj.m_commandLine.Text);
+-			obj.m_commandLine.Clear();
+-		}
+-
+-		private void Input_KeyDown(object sender, EventArgs e)
+-		{
+-			TextBox textBox = (TextBox)sender;
+-			CommandForm commandForm = (CommandForm)textBox.Parent;
+-			KeyEventArgs e2 = (KeyEventArgs)e;
+-			if (e2.KeyCode == System.Windows.Forms.Keys.Return)
+-			{
+-				ProcessCommand(commandForm.m_commandLine.Text);
+-				textBox.Clear();
+-				e2.Handled = true;
+-			}
+-			else if (e2.KeyCode == System.Windows.Forms.Keys.Down)
+-			{
+-				DoskeyIncrement();
+-				e2.Handled = true;
+-			}
+-			else if (e2.KeyCode == System.Windows.Forms.Keys.Up)
+-			{
+-				DoskeyDecrement();
+-				e2.Handled = true;
+-			}
+-		}
++		internal void Dispose() { }
+ 	}
+@@ -770,14 +663,7 @@
+ 
++	// Was: dispose any existing CommandForm, construct a new one, seed it with help output and
++	// Show() it. Now a no-op so s_form stays null - see PORT DEVIATION 8. This is what the
++	// "\" key and the "command" console command used to reach.
+ 	public static void DoModelessDialog()
+ 	{
+-		if (s_form != null)
+-		{
+-			s_form.Dispose();
+-		}
+-		s_form = new CommandForm();
+-		if (s_output.Count == 0)
+-		{
+-			HelpDelegate(new string[0]);
+-		}
+-		s_form.Show();
+ 	}
+--- a/Kensei/Dev/Options.cs
++++ b/Kensei/Dev/Options.cs
+@@ -2,6 +2,4 @@
+ using System.Collections.Generic;
+-using System.Drawing;
+ using System.Runtime.Serialization;
+ using System.Text;
+-using System.Windows.Forms;
+ using Microsoft.Xna.Framework.Graphics;
+@@ -54,826 +52,59 @@
+ 
+-	private class OptionsForm : Form
++	// PORT DEVIATION 8 (see PORTING-NOTES.md).
++	// The 827-line `private class OptionsForm : Form` that used to live here is replaced by
++	// this inert stub. It was the WinForms/GDI+ developer tweak panel - TabControl, a TrackBar
++	// per float option, owner-drawn ListBox items via System.Drawing, copy-to-Clipboard - and
++	// it was UNREACHABLE in the shipped game: the only caller of Options.CreateDialog is
++	// Client.InitDeveloperDialog, which itself has zero callers, so s_form was always null.
++	// Every public Options member already guards on `s_form != null`, which is why all the
++	// SetOption calls were pure dictionary writes and GetOption always returned false.
++	//
++	// Keeping the nested type with the same private member names - rather than editing the
++	// outer class - means not one of the ~360 Kensei.Dev call sites changes, and s_form still
++	// stays null, so behaviour is bit-identical to retail. What it buys is ~1,000 lines of
++	// WinForms + GDI+ removed from the code base, which the DesktopGL build requires:
++	// Options.cs alone accounted for 68 of its 160 compile errors.
++	private sealed class OptionsForm
+ 	{
+-		private static readonly int FormSize = 440;
++		internal void AddButton(string option, EntityType type) { }
+ 
+-		private static readonly int CheckBoxPosition = 8;
++		internal void AddOption(string option) { }
+ 
+-		private static readonly int CheckBoxYHeight = 23;
++		internal void AddOption(string option, bool value) { }
+ 
+-		private static readonly int ButtonHeight = 16;
+-
+-		private static readonly int CheckBoxPadding = 3;
+-
+-		private Label lblEntityInfo;
+-
+-		private Label lblEntityGoals;
+-
+-		private Label lblEvents;
+-
+-		private Label lblTestEvents;
+-
+-		private Label lblEventsLog;
+-
+-		private Label lblSounds;
+-
+-		private Label lblAllegiances;
+-
+-		private Label lblPerformance;
+-
+-		private Label lblEmigrateRoll;
+-
+-		private Label lblJobs;
+-
+-		private ListBox lbEventsLog;
+-
+-		private ComboBox ddlTestActionSets;
+-
+-		private ComboBox ddlTestPolledEvents;
+-
+-		private TextBox tbTestEventsResult;
+-
+-		private ListBox lbPopulationSpawn;
+-
+-		private TabControl m_tabControl = new TabControl();
+-
+-		private List<TabPage> m_tabPages = new List<TabPage>();
+-
+-		private Dictionary<string, CheckBox> checkBoxes = new Dictionary<string, CheckBox>();
+-
+-		private List<TrackBar> m_trackBars = new List<TrackBar>();
+-
+-		public OptionsForm()
+-		{
+-			SuspendLayout();
+-			m_tabControl.SuspendLayout();
+-			m_tabControl.Location = new Point(0, 0);
+-			m_tabControl.Name = "TabControl";
+-			m_tabControl.SelectedIndex = 0;
+-			m_tabControl.Size = new Size(FormSize, 8000);
+-			m_tabControl.TabIndex = 0;
+-			m_tabControl.Multiline = true;
+-			base.AutoScaleDimensions = new SizeF(6f, 13f);
+-			base.AutoScaleMode = AutoScaleMode.Font;
+-			base.Controls.Add(m_tabControl);
+-			base.ClientSize = new Size(FormSize, FormSize * 2);
+-			base.ClientSizeChanged += Form_ClientSizeChanged;
+-			base.Location = new Point(1000, 0);
+-			base.ResizeEnd += OptionsForm_ResizeEnd;
+-			base.Resize += OptionsForm_Resize;
+-			base.Name = "Dev Options";
+-			Text = "Dev Options";
+-			TabPage tabPage = GetTabPage("Output");
+-			lblEntityInfo = new Label();
+-			lblEntityInfo.AutoSize = true;
+-			lblEntityInfo.Location = new Point(10, 10);
+-			lblEntityInfo.Text = "ENTITY INFO";
+-			tabPage.Controls.Add(lblEntityInfo);
+-			lblEntityGoals = new Label();
+-			lblEntityGoals.AutoSize = true;
+-			lblEntityGoals.Location = new Point(10, 600);
+-			lblEntityGoals.Text = "ENTITY GOALS";
+-			tabPage.Controls.Add(lblEntityGoals);
+-			tabPage = GetTabPage("Sounds");
+-			lblSounds = new Label();
+-			lblSounds.AutoSize = true;
+-			lblSounds.Location = new Point(10, 10);
+-			lblSounds.Text = "SOUNDS";
+-			tabPage.Controls.Add(lblSounds);
+-			tabPage = GetTabPage("Allegiances");
+-			lblAllegiances = new Label();
+-			lblAllegiances.AutoSize = true;
+-			lblAllegiances.Location = new Point(10, 10);
+-			lblAllegiances.Text = "EVENTS";
+-			tabPage.Controls.Add(lblAllegiances);
+-			tabPage = GetTabPage("Performance");
+-			lblPerformance = new Label();
+-			lblPerformance.AutoSize = true;
+-			lblPerformance.Location = new Point(10, 90);
+-			lblPerformance.Text = "PERFORMANCE";
+-			tabPage.Controls.Add(lblPerformance);
+-			tabPage = GetTabPage("Emigrate rolls");
+-			lblEmigrateRoll = new Label();
+-			lblEmigrateRoll.AutoSize = true;
+-			lblEmigrateRoll.Location = new Point(10, 90);
+-			tabPage.Controls.Add(lblEmigrateRoll);
+-			tabPage = GetTabPage("Events");
+-			lblEvents = new Label();
+-			lblEvents.AutoSize = true;
+-			lblEvents.Location = new Point(10, 10);
+-			lblEvents.Text = "EVENTS";
+-			tabPage.Controls.Add(lblEvents);
+-			tabPage = GetTabPage("Jobs");
+-			lblJobs = new Label();
+-			lblJobs.AutoSize = true;
+-			lblJobs.Location = new Point(0, 10);
+-			lblJobs.Text = "JOBS";
+-			Font font = new Font("Consolas", 9f, FontStyle.Regular, GraphicsUnit.Point);
+-			lblJobs.Font = font;
+-			tabPage.Controls.Add(lblJobs);
+-			tabPage = GetTabPage("Test events");
+-			lblTestEvents = new Label();
+-			lblTestEvents.AutoSize = true;
+-			lblTestEvents.Location = new Point(10, 10);
+-			lblTestEvents.Text = "TEST EVENTS";
+-			tabPage.Controls.Add(lblTestEvents);
+-			ddlTestActionSets = new ComboBox();
+-			ddlTestActionSets.DropDownStyle = ComboBoxStyle.DropDownList;
+-			ddlTestActionSets.Width = tabPage.Width - 40;
+-			ddlTestActionSets.DropDownHeight = 600;
+-			ddlTestActionSets.Location = new Point(10, 40);
+-			ddlTestActionSets.SelectionChangeCommitted += ddlTestEvents_SelectionChangeCommitted;
+-			tabPage.Controls.Add(ddlTestActionSets);
+-			ddlTestPolledEvents = new ComboBox();
+-			ddlTestPolledEvents.DropDownStyle = ComboBoxStyle.DropDownList;
+-			ddlTestPolledEvents.Width = tabPage.Width - 40;
+-			ddlTestPolledEvents.DropDownHeight = 600;
+-			ddlTestPolledEvents.Location = new Point(10, 70);
+-			ddlTestPolledEvents.SelectionChangeCommitted += ddlTestPolledEvents_SelectionChangeCommitted;
+-			tabPage.Controls.Add(ddlTestPolledEvents);
+-			tbTestEventsResult = new TextBox();
+-			tbTestEventsResult.Multiline = true;
+-			tbTestEventsResult.WordWrap = true;
+-			tbTestEventsResult.ScrollBars = ScrollBars.Vertical;
+-			tbTestEventsResult.Width = ddlTestActionSets.Width;
+-			tbTestEventsResult.Height = 600;
+-			tbTestEventsResult.Location = new Point(10, 90);
+-			tabPage.Controls.Add(tbTestEventsResult);
+-			tabPage = GetTabPage("Events log");
+-			lblEventsLog = new Label();
+-			lblEventsLog.AutoSize = true;
+-			lblEventsLog.Location = new Point(0, 0);
+-			lblEventsLog.Text = "EVENTS \n";
+-			tabPage.Controls.Add(lblEventsLog);
+-			lbEventsLog = new ListBox();
+-			lbEventsLog.Location = new Point(0, 20);
+-			lbEventsLog.Height = 600;
+-			lbEventsLog.Width = tabPage.Width - 40;
+-			lbEventsLog.KeyUp += lbEventsLog_KeyUp;
+-			lbEventsLog.DrawMode = DrawMode.OwnerDrawFixed;
+-			lbEventsLog.DrawItem += lbEventsLog_DrawItem;
+-			tabPage.Controls.Add(lbEventsLog);
+-			tabPage = GetTabPage("Population spawns");
+-			Label value = new Label
+-			{
+-				AutoSize = true,
+-				Location = new Point(0, 5),
+-				Text = "POPULATION SPAWN \n"
+-			};
+-			tabPage.Controls.Add(value);
+-			lbPopulationSpawn = new ListBox();
+-			lbPopulationSpawn.Width = tabPage.Width - 50;
+-			lbPopulationSpawn.Height = 600;
+-			lbPopulationSpawn.KeyUp += lbEventsLog_KeyUp;
+-			lbPopulationSpawn.Location = new Point(10, 20);
+-			tabPage.Controls.Add(lbPopulationSpawn);
+-			m_tabControl.ResumeLayout(performLayout: false);
+-			ResumeLayout(performLayout: false);
+-		}
+-
+-		private void ddlTestEvents_SelectionChangeCommitted(object sender, EventArgs e)
+-		{
+-			ActionSets actionSets = (ActionSets)ddlTestActionSets.SelectedValue;
+-			try
+-			{
+-				actionSets.TestFire(null, null, null, null);
+-			}
+-			catch (AggregateException ex)
+-			{
+-				string output = "";
+-				foreach (Exception innerException in ex.InnerExceptions)
+-				{
+-					OutputException(innerException, ref output);
+-				}
+-				tbTestEventsResult.Text = output;
+-			}
+-		}
+-
+-		private void ddlTestPolledEvents_SelectionChangeCommitted(object sender, EventArgs e)
+-		{
+-			PolledEventType polledEventType = (PolledEventType)ddlTestPolledEvents.SelectedValue;
+-			try
+-			{
+-				polledEventType.Fire(null, null, out var _);
+-			}
+-			catch (AggregateException ex)
+-			{
+-				string output = "";
+-				foreach (Exception innerException in ex.InnerExceptions)
+-				{
+-					OutputException(innerException, ref output);
+-				}
+-				tbTestEventsResult.Text = output;
+-			}
+-		}
+-
+-		private static void OutputException(Exception ex, ref string output)
+-		{
+-			if (ex != null)
+-			{
+-				output = output + ex.Message + " " + ex.StackTrace + Environment.NewLine;
+-				OutputException(ex.InnerException, ref output);
+-			}
+-		}
+-
+-		private void lbEventsLog_DrawItem(object sender, DrawItemEventArgs e)
+-		{
+-			string text = ((ListBox)sender).Items[e.Index].ToString();
+-			Graphics graphics = e.Graphics;
+-			e.DrawBackground();
+-			if (text.Contains("NO EXEC"))
+-			{
+-				graphics.FillRectangle(new SolidBrush(Color.LightSalmon), e.Bounds);
+-			}
+-			graphics.DrawString(text, e.Font, new SolidBrush(e.ForeColor), new PointF(e.Bounds.X, e.Bounds.Y));
+-			e.DrawFocusRectangle();
+-		}
++		internal void AddOption(string option, float value, float min, float max) { }
+ 
+-		private void lbEventsLog_KeyUp(object sender, KeyEventArgs e)
+-		{
+-			if (e.Control && e.KeyCode == Keys.C)
+-			{
+-				CopyListBoxItemsToClipboard((ListBox)sender);
+-			}
+-		}
+-
+-		private void listBox1_DrawItem(object sender, DrawItemEventArgs e)
+-		{
+-		}
+-
+-		private void OptionsForm_Resize(object sender, EventArgs e)
+-		{
+-			ResizeTabPages();
+-			ResizeListBox(lbEventsLog);
+-			ResizeListBox(lbPopulationSpawn);
+-		}
+-
+-		private void ResizeListBox(ListBox listbox)
+-		{
+-			listbox.Width = listbox.Parent.Width - 40;
+-			listbox.Height = listbox.Parent.Height - 160;
+-		}
++		internal void UpdateOption(string option, bool value) { }
+ 
+-		private void ResizeTabPages()
+-		{
+-			foreach (TabPage tabPage in m_tabPages)
+-			{
+-				tabPage.Width = tabPage.Parent.Width;
+-			}
+-		}
+-
+-		private void OptionsForm_ResizeEnd(object sender, EventArgs e)
+-		{
+-			ResizeTabPages();
+-			ResizeListBox(lbEventsLog);
+-			ResizeListBox(lbPopulationSpawn);
+-		}
++		internal void UpdateOption(string option, float value) { }
+ 
+-		private void CopyListBoxItemsToClipboard(ListBox listBox)
+-		{
+-			try
+-			{
+-				StringBuilder stringBuilder = new StringBuilder();
+-				if (listBox.Items.Count > 0)
+-				{
+-					foreach (object item in listBox.Items)
+-					{
+-						stringBuilder.Append(item.ToString());
+-						stringBuilder.AppendLine();
+-					}
+-					stringBuilder.Remove(stringBuilder.Length - 1, 1);
+-				}
+-				Clipboard.SetData(DataFormats.Text, stringBuilder.ToString());
+-			}
+-			catch (Exception ex)
+-			{
+-				MessageBox.Show(ex.Message);
+-			}
+-		}
+-
+-		public void SetEntityInfotext(string text)
+-		{
+-			lblEntityInfo.Text = text;
+-		}
+-
+-		public void SetEntityGoalsText(string text)
+-		{
+-			lblEntityGoals.Text = text;
+-		}
+-
+-		public void SetEventsText(string text)
+-		{
+-			lblEvents.Text = text;
+-		}
+-
+-		public void SetJobsText(string text)
+-		{
+-			lblJobs.Text = text;
+-		}
+-
+-		public void SetPerformanceText(string text)
+-		{
+-			lblPerformance.Text = text;
+-		}
+-
+-		public void SetEmigrateRollText(string text)
+-		{
+-			lblEmigrateRoll.Text = text;
+-		}
+-
+-		public void SetAllegiancesText(string text)
+-		{
+-			lblAllegiances.Text = text;
+-		}
+-
+-		public void AppendEventsLogText(string text)
+-		{
+-			lbEventsLog.Items.Add(text);
+-		}
+-
+-		public void AppendPopSpawnText(string text)
+-		{
+-			lbPopulationSpawn.Items.Add(text);
+-			lbPopulationSpawn.Refresh();
+-		}
+-
+-		public void PopulateTestEvents(List<ActionSets> actions)
+-		{
+-			ddlTestActionSets.DisplayMember = "KeyName";
+-			actions.Sort(CompareDataByName);
+-			ddlTestActionSets.DataSource = actions;
+-		}
+-
+-		public void PopulatePolledTestEvents(List<PolledEventType> actions)
+-		{
+-			ddlTestPolledEvents.DisplayMember = "KeyName";
+-			actions.Sort(CompareDataByName);
+-			ddlTestPolledEvents.DataSource = actions;
+-		}
+-
+-		public static int CompareDataByName(IGameData a1, IGameData a2)
+-		{
+-			return string.Compare(a1.KeyName, a2.KeyName);
+-		}
+-
+-		public void SetSoundsText(string text)
+-		{
+-			lblSounds.Text = text;
+-		}
+-
+-		public void AddOption(string option)
+-		{
+-			string pageName = "Misc";
+-			int num = option.IndexOf(".", StringComparison.Ordinal);
+-			if (num > 0 && num < option.Length - 1)
+-			{
+-				pageName = option.Substring(0, num);
+-			}
+-			TabPage tabPage = GetTabPage(pageName);
+-			AddButton(option, tabPage);
+-		}
+-
+-		public void AddOption(string option, bool value)
+-		{
+-			string pageName = "Misc";
+-			int num = option.IndexOf(".", StringComparison.Ordinal);
+-			if (num > 0 && num < option.Length - 1)
+-			{
+-				pageName = option.Substring(0, num);
+-			}
+-			TabPage tabPage = GetTabPage(pageName);
+-			AddCheckBox(option, tabPage, value);
+-		}
+-
+-		public void AddOption(string option, float value, float min, float max)
+-		{
+-			string pageName = "Misc";
+-			int num = option.IndexOf(".", StringComparison.Ordinal);
+-			if (num > 0 && num < option.Length - 1)
+-			{
+-				pageName = option.Substring(0, num);
+-			}
+-			TabPage tabPage = GetTabPage(pageName);
+-			AddTrackBar(option, tabPage, value, min, max);
+-		}
++		internal void RemoveOption(string option) { }
+ 
+-		public void AddButton(string option, EntityType type)
+-		{
+-			int num = option.IndexOf(".", StringComparison.Ordinal);
+-			string pageName = ((num <= 0 || num >= option.Length - 1) ? "Misc" : option.Substring(0, num));
+-			TabPage tabPage = GetTabPage(pageName);
+-			AddButton(option, tabPage);
+-		}
++		internal void AppendEventsLogText(string text) { }
+ 
+-		public void RemoveOption(string option)
+-		{
+-			string pageName = "Misc";
+-			int num = option.IndexOf(".", StringComparison.Ordinal);
+-			if (num > 0 && num < option.Length - 1)
+-			{
+-				pageName = option.Substring(0, num);
+-			}
+-			TabPage tabPage = GetTabPage(pageName);
+-			RemoveCheckBox(option, tabPage);
+-			RemoveTrackBar(option, tabPage);
+-		}
++		internal void AppendPopSpawnText(string text) { }
+ 
+-		public void UpdateOption(string option, bool value)
+-		{
+-			if (checkBoxes.TryGetValue(option, out var value2))
+-			{
+-				value2.CheckedChanged -= Option_CheckedChanged;
+-				value2.CheckState = (value ? CheckState.Checked : CheckState.Unchecked);
+-				value2.CheckedChanged += Option_CheckedChanged;
+-			}
+-		}
++		internal void PopulateTestEvents(List<ActionSets> actions) { }
+ 
+-		public void UpdateOption(string option, float value)
+-		{
+-			for (int i = 0; i < m_trackBars.Count; i++)
+-			{
+-				TrackBar trackBar = m_trackBars[i];
+-				if (!(trackBar.Name == option))
+-				{
+-					continue;
+-				}
+-				trackBar.ValueChanged -= Option_ValueChanged;
+-				trackBar.Value = (int)(value * 1000f);
+-				trackBar.ValueChanged += Option_ValueChanged;
+-				System.Windows.Forms.Control[] array = trackBar.Controls.Find("default", searchAllChildren: true);
+-				if (array.Length == 0)
+-				{
+-					Label label = new Label();
+-					label.Name = "default";
+-					label.Tag = value.ToString();
+-					label.Location = new Point(trackBar.Width - 70, 0);
+-					label.ForeColor = Color.White;
+-					label.Font = new Font(label.Font, FontStyle.Bold);
+-					label.AutoSize = false;
+-					label.Size = new Size(70, 18);
+-					trackBar.Controls.Add(label);
+-				}
+-				array = trackBar.Controls.Find("default", searchAllChildren: true);
+-				if (array.Length == 0)
+-				{
+-					break;
+-				}
+-				Label label2 = array[0] as Label;
+-				if (label2.Tag.ToString() != value.ToString())
+-				{
+-					if (option.Contains("Rotate"))
+-					{
+-						label2.BackColor = Color.Purple;
+-					}
+-					else if (option.Contains("Translate"))
+-					{
+-						label2.BackColor = Color.DarkOrange;
+-					}
+-					else
+-					{
+-						label2.BackColor = Color.Red;
+-					}
+-					label2.Text = " " + value;
+-					label2.BorderStyle = BorderStyle.Fixed3D;
+-					label2.Size = new Size(70, 18);
+-				}
+-				else
+-				{
+-					label2.BorderStyle = BorderStyle.None;
+-					label2.Size = new Size(0, 0);
+-					label2.BackColor = Color.Transparent;
+-					label2.Text = "";
+-				}
+-				break;
+-			}
+-		}
++		internal void PopulatePolledTestEvents(List<PolledEventType> actions) { }
+ 
+-		private TabPage GetTabPage(string pageName)
+-		{
+-			for (int i = 0; i < m_tabPages.Count; i++)
+-			{
+-				if (m_tabPages[i].Name == pageName)
+-				{
+-					return m_tabPages[i];
+-				}
+-			}
+-			SuspendLayout();
+-			TabPage tabPage = new TabPage();
+-			tabPage.SuspendLayout();
+-			tabPage.Name = pageName;
+-			tabPage.Text = pageName;
+-			tabPage.Padding = new Padding(CheckBoxPadding);
+-			tabPage.Size = new Size(FormSize - CheckBoxPosition, CheckBoxPosition);
+-			tabPage.UseVisualStyleBackColor = true;
+-			tabPage.AutoScroll = true;
+-			AutoScroll = true;
+-			tabPage.AutoSize = false;
+-			tabPage.Size = new Size(FormSize - CheckBoxPosition, 2000);
+-			m_tabPages.Add(tabPage);
+-			m_tabControl.SuspendLayout();
+-			m_tabControl.Controls.Add(tabPage);
+-			m_tabControl.ResumeLayout(performLayout: false);
+-			ResumeLayout(performLayout: false);
+-			return tabPage;
+-		}
++		internal void SetAllegiancesText(string text) { }
+ 
+-		private int RemoveCheckBox(string option, TabPage page)
+-		{
+-			if (!checkBoxes.TryGetValue(option, out var value))
+-			{
+-				return 0;
+-			}
+-			SuspendLayout();
+-			m_tabControl.SuspendLayout();
+-			page.SuspendLayout();
+-			checkBoxes.Remove(option);
+-			page.Controls.Remove(value);
+-			page.ResumeLayout(performLayout: false);
+-			page.PerformLayout();
+-			m_tabControl.ResumeLayout(performLayout: false);
+-			ResumeLayout(performLayout: false);
+-			return value.Location.Y + value.Size.Height + 2 * CheckBoxPadding + page.Bounds.Top;
+-		}
++		internal void SetEmigrateRollText(string text) { }
+ 
+-		private int RemoveTrackBar(string option, TabPage page)
+-		{
+-			TrackBar trackBar = m_trackBars.FindLast((TrackBar c) => c.Name == option);
+-			if (trackBar == null)
+-			{
+-				return 0;
+-			}
+-			SuspendLayout();
+-			m_tabControl.SuspendLayout();
+-			page.SuspendLayout();
+-			m_trackBars.Remove(trackBar);
+-			page.Controls.Remove(trackBar);
+-			page.ResumeLayout(performLayout: false);
+-			page.PerformLayout();
+-			m_tabControl.ResumeLayout(performLayout: false);
+-			ResumeLayout(performLayout: false);
+-			return trackBar.Location.Y + trackBar.Size.Height + 2 * CheckBoxPadding + page.Bounds.Top;
+-		}
++		internal void SetEntityGoalsText(string text) { }
+ 
+-		private int AddTrackBar(string option, TabPage page, float value, float min, float max)
+-		{
+-			for (int i = 0; i < m_trackBars.Count; i++)
+-			{
+-				if (m_trackBars[i].Name == option)
+-				{
+-					m_trackBars[i].Value = (int)value * 1000;
+-					m_trackBars[i].Minimum = (int)min;
+-					m_trackBars[i].Maximum = (int)max;
+-					return 0;
+-				}
+-			}
+-			SuspendLayout();
+-			m_tabControl.SuspendLayout();
+-			page.SuspendLayout();
+-			TrackBar trackBar = new TrackBar();
+-			int num = CheckBoxPosition;
+-			foreach (System.Windows.Forms.Control control in page.Controls)
+-			{
+-				num = Math.Max(num, control.Bottom);
+-			}
+-			int num2 = option.LastIndexOf('.');
+-			string text = option;
+-			if (num2 >= 0)
+-			{
+-				text = text.Substring(num2 + 1);
+-			}
+-			bool flag = false;
+-			if (text.Length > 42)
+-			{
+-				flag = true;
+-			}
+-			trackBar.Location = new Point(CheckBoxPosition, num + CheckBoxPadding * 4);
+-			if (flag)
+-			{
+-				trackBar.AutoSize = false;
+-				trackBar.Size = new Size(FormSize - 4 * CheckBoxPosition, 62);
+-			}
+-			else
+-			{
+-				trackBar.AutoSize = true;
+-				trackBar.Size = new Size(FormSize - 4 * CheckBoxPosition, 20);
+-			}
+-			trackBar.TabIndex = page.Controls.Count;
+-			trackBar.Minimum = (int)(min * 1000f);
+-			trackBar.Maximum = (int)(max * 1000f);
+-			trackBar.Value = (int)(value * 1000f);
+-			trackBar.Scroll += Option_ValueChanged;
+-			trackBar.Name = option;
+-			trackBar.TickStyle = TickStyle.Both;
+-			trackBar.BackColor = ChooseColorForPageControl(page);
+-			if (trackBar.Maximum - trackBar.Minimum > 5000000)
+-			{
+-				trackBar.TickFrequency = 1000000;
+-			}
+-			else if (trackBar.Maximum - trackBar.Minimum > 500000)
+-			{
+-				trackBar.TickFrequency = 100000;
+-			}
+-			else if (trackBar.Maximum - trackBar.Minimum > 50000)
+-			{
+-				trackBar.TickFrequency = 10000;
+-			}
+-			else if (trackBar.Maximum - trackBar.Minimum > 5000)
+-			{
+-				trackBar.TickFrequency = 1000;
+-			}
+-			else if (trackBar.Maximum - trackBar.Minimum > 500)
+-			{
+-				trackBar.TickFrequency = 100;
+-			}
+-			else if (trackBar.Maximum - trackBar.Minimum > 50)
+-			{
+-				trackBar.TickFrequency = 10;
+-			}
+-			if (option.Contains("Rotate"))
+-			{
+-				trackBar.BackColor = Color.Thistle;
+-			}
+-			else if (option.Contains("Translate"))
+-			{
+-				trackBar.BackColor = Color.Wheat;
+-			}
+-			Label label = new Label();
+-			label.Text = text;
+-			label.Name = option;
+-			label.Location = new Point(CheckBoxPadding, CheckBoxPadding - 1);
+-			label.Width = 330;
+-			label.AutoEllipsis = true;
+-			label.Height = 14;
+-			label.BackColor = Color.Transparent;
+-			trackBar.Controls.Add(label);
+-			Label label2 = new Label();
+-			label2.Text = "Coded to: " + value;
+-			label2.Name = option;
+-			label2.AutoSize = true;
+-			label2.BackColor = Color.LightBlue;
+-			trackBar.Controls.Add(label2);
+-			if (flag)
+-			{
+-				label2.Location = new Point(CheckBoxPadding, 49);
+-			}
+-			else
+-			{
+-				label2.Location = new Point(224, label.Location.Y);
+-			}
+-			int num3 = 33;
+-			Label label3 = new Label();
+-			label3.Text = min.ToString();
+-			label3.Name = "min";
+-			label3.Location = new Point(CheckBoxPosition, num3);
+-			label3.AutoSize = true;
+-			trackBar.Controls.Add(label3);
+-			Label label4 = new Label();
+-			label4.Text = max.ToString();
+-			label4.Name = "min";
+-			label4.Location = new Point(trackBar.Size.Width - CheckBoxPosition * 3, num3);
+-			label4.AutoSize = true;
+-			trackBar.Controls.Add(label4);
+-			Label label5 = new Label();
+-			label5.Text = ((max + min) * 0.5f).ToString();
+-			label5.Name = "mid";
+-			label5.Location = new Point(label4.Location.X + label3.Location.X >> 1, num3);
+-			label5.AutoSize = true;
+-			trackBar.Controls.Add(label5);
+-			m_trackBars.Add(trackBar);
+-			page.Controls.Add(trackBar);
+-			page.ResumeLayout(performLayout: false);
+-			page.PerformLayout();
+-			m_tabControl.ResumeLayout(performLayout: false);
+-			ResumeLayout(performLayout: false);
+-			return trackBar.Bottom;
+-		}
++		internal void SetEntityInfotext(string text) { }
+ 
+-		private Color ChooseColorForPageControl(TabPage page)
+-		{
+-			if (page.Controls.Count % 2 != 0)
+-			{
+-				return page.BackColor;
+-			}
+-			return Color.Gainsboro;
+-		}
++		internal void SetEventsText(string text) { }
+ 
+-		private int AddCheckBox(string option, TabPage page, bool value)
+-		{
+-			if (checkBoxes.TryGetValue(option, out var value2))
+-			{
+-				value2.Checked = value;
+-				return 0;
+-			}
+-			SuspendLayout();
+-			m_tabControl.SuspendLayout();
+-			page.SuspendLayout();
+-			value2 = new CheckBox();
+-			value2.AutoSize = true;
+-			int num = CheckBoxPosition;
+-			foreach (System.Windows.Forms.Control control in page.Controls)
+-			{
+-				num = Math.Max(num, control.Bottom);
+-			}
+-			value2.Location = new Point(CheckBoxPosition, num + 2 * CheckBoxPadding);
+-			value2.Name = option;
+-			int num2 = option.LastIndexOf('.');
+-			string text = option;
+-			if (num2 >= 0)
+-			{
+-				text = text.Substring(num2 + 1);
+-			}
+-			value2.Text = text;
+-			value2.Size = new Size(FormSize - 4 * CheckBoxPosition, CheckBoxYHeight - 2 * CheckBoxPadding);
+-			value2.TabIndex = page.Controls.Count;
+-			value2.UseVisualStyleBackColor = true;
+-			value2.Checked = value;
+-			value2.CheckedChanged += Option_CheckedChanged;
+-			value2.BackColor = ChooseColorForPageControl(page);
+-			checkBoxes.Add(option, value2);
+-			page.Controls.Add(value2);
+-			page.ResumeLayout(performLayout: false);
+-			page.PerformLayout();
+-			m_tabControl.ResumeLayout(performLayout: false);
+-			ResumeLayout(performLayout: false);
+-			return value2.Bottom;
+-		}
+-
+-		public string ShownTab()
+-		{
+-			return m_tabControl.SelectedTab.Name;
+-		}
+-
+-		private int AddButton(string option, TabPage page)
+-		{
+-			SuspendLayout();
+-			m_tabControl.SuspendLayout();
+-			page.SuspendLayout();
+-			Button button = new Button();
+-			button.AutoSize = true;
+-			int num = CheckBoxPosition;
+-			foreach (System.Windows.Forms.Control control in page.Controls)
+-			{
+-				num = Math.Max(num, control.Bottom);
+-			}
+-			button.Location = new Point(CheckBoxPosition, num + 2 * CheckBoxPadding);
+-			button.Name = option;
+-			int num2 = option.LastIndexOf('.');
+-			string text = option;
+-			if (num2 >= 0)
+-			{
+-				text = text.Substring(num2 + 1);
+-			}
+-			button.Text = text;
+-			button.Size = new Size(FormSize / 2, ButtonHeight + CheckBoxPadding);
+-			button.TabIndex = page.Controls.Count;
+-			button.UseVisualStyleBackColor = true;
+-			button.Anchor = AnchorStyles.Top;
+-			button.Click += Option_ButtonClicked;
+-			button.BackColor = ChooseColorForPageControl(page);
+-			page.Controls.Add(button);
+-			page.ResumeLayout(performLayout: false);
+-			page.PerformLayout();
+-			m_tabControl.ResumeLayout(performLayout: false);
+-			ResumeLayout(performLayout: false);
+-			if (text.EndsWith("person"))
+-			{
+-				int bottom = button.Bottom;
+-				button.Font = new Font(button.Font, FontStyle.Bold);
+-				button.BackColor = Color.LightGreen;
+-				button.Location = new Point(FormSize / 2 + 4 * CheckBoxPadding, CheckBoxPosition + 2 * CheckBoxPadding);
+-				button.Size = new Size(FormSize / 4, ButtonHeight + CheckBoxPadding);
+-				return bottom;
+-			}
+-			return button.Bottom;
+-		}
++		internal void SetJobsText(string text) { }
+ 
+-		private void Option_CheckedChanged(object sender, EventArgs e)
+-		{
+-			if (sender is CheckBox checkBox)
+-			{
+-				SetOption(checkBox.Name, checkBox.Checked, doCallback: true);
+-			}
+-		}
++		internal void SetPerformanceText(string text) { }
+ 
+-		private void Option_ButtonClicked(object sender, EventArgs e)
+-		{
+-			if (sender is Button button)
+-			{
+-				SetOption(button.Name, DebugButton.MakeAButton, doCallback: true);
+-			}
+-		}
++		internal void SetSoundsText(string text) { }
+ 
+-		private void Option_ValueChanged(object sender, EventArgs e)
+-		{
+-			if (sender is TrackBar trackBar)
+-			{
+-				SetOption(trackBar.Name, 0.001f * (float)trackBar.Value, trackBar.Minimum, trackBar.Maximum, doCallback: true);
+-				_ = trackBar.Name;
+-			}
+-		}
++		internal string ShownTab() => null;
+ 
+-		private void Form_ClientSizeChanged(object sender, EventArgs e)
+-		{
+-			OptionsForm optionsForm = (OptionsForm)sender;
+-			optionsForm.m_tabControl.ClientSize = new Size(optionsForm.ClientSize.Width, 8000);
+-		}
++		internal void Dispose() { }
+ 	}
+@@ -892,3 +123,5 @@
+ 
+-	public static Form Form => s_form;
++	// Was `public static Form Form`; the WinForms type is gone and nothing outside Kensei.Dev
++	// ever read this. Always null, as it was in retail.
++	public static object Form => s_form;
+ 
+@@ -1190,16 +423,9 @@
+ 
++	// Was: construct OptionsForm, add every bool option to it, Show() it and position it
++	// against GraphicsAdapter.DefaultAdapter.CurrentDisplayMode. Now a no-op - see
++	// PORT DEVIATION 8. Its ONLY caller, Client.InitDeveloperDialog, has zero callers,
++	// so this never ran in the shipped game and s_form was always null. Kept as a
++	// method so the (unreachable) call site still compiles.
+ 	public static void CreateDialog()
+ 	{
+-		if (s_form != null)
+-		{
+-			Destroy();
+-		}
+-		s_form = new OptionsForm();
+-		foreach (KeyValuePair<string, bool> item in s_optionsBool)
+-		{
+-			s_form.AddOption(item.Key, item.Value);
+-		}
+-		s_form.Show();
+-		int width = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Width;
+-		s_form.Location = new Point(width - (s_form.ClientSize.Width + 32), 0);
+ 	}
+--- a/Properties/AssemblyInfo.cs
++++ b/Properties/AssemblyInfo.cs
+@@ -6,5 +6,2 @@
+ 
+-[assembly: AssemblyTitle("UnclaimedWorld")]
+-[assembly: AssemblyProduct("UnclaimedWorld")]
+-[assembly: AssemblyConfiguration("")]
+ [assembly: AssemblyDescription("")]
+@@ -12,2 +9,3 @@
+ [assembly: AssemblyCopyright("Copyright © 2016")]
++[assembly: AssemblyConfiguration("")]
+ [assembly: AssemblyTrademark("")]
+@@ -16,2 +14,4 @@
+ [assembly: AssemblyFileVersion("1.0.4.8")]
++[assembly: AssemblyProduct("UnclaimedWorld")]
++[assembly: AssemblyTitle("UnclaimedWorld")]
+ [assembly: AssemblyVersion("1.0.4.8")]
+--- a/UWGame/ClientSide/Client.cs
++++ b/UWGame/ClientSide/Client.cs
+@@ -207,3 +207,3 @@
+ 		{
+-			Content = new ContentManager(base.Controller.Game.Services);
++			Content = new UWGame.Port.UwContentManager(base.Controller.Game.Services);
+ 			Content.RootDirectory = "Content";
+@@ -2737,2 +2737,9 @@
+ 			flag = inputData.IsKeyTapped(options.ToggleIngameMenu);
++			// UNHIDDEN MOD: "O" toggles shadows. Read by DateAndTime.ComputeSunAndLight.
++			// Hard-coded rather than an Options binding, as the contributed patch had it - it is
++			// not in the key-rebinding UI, so there is no setting to collide with.
++			if (UWGame.Mods.UnhiddenMod.Enabled && inputData.IsKeyTapped(Keys.O))
++			{
++				UWGame.Mods.UnhiddenMod.ShadowsDisabled = !UWGame.Mods.UnhiddenMod.ShadowsDisabled;
++			}
+ 		}
+--- a/UWGame/ClientSide/Interface/CommonInterface.cs
++++ b/UWGame/ClientSide/Interface/CommonInterface.cs
+@@ -1,7 +1,7 @@
+ using System;
+-using System.Drawing;
+-using System.Runtime.InteropServices;
+-using System.Windows.Forms;
++using System.IO;
+ using GameStateManagement;
+ using Microsoft.Xna.Framework;
++using Microsoft.Xna.Framework.Graphics;
++using Microsoft.Xna.Framework.Input;
+ using UWGame.ClientSide.Interface.HUD_Windows;
+@@ -20,14 +20,2 @@
+ 
+-	private struct IconInfo
+-	{
+-		public bool fIcon;
+-
+-		public int xHotspot;
+-
+-		public int yHotspot;
+-
+-		public IntPtr hbmMask;
+-
+-		public IntPtr hbmColor;
+-	}
+ 
+@@ -37,3 +25,7 @@
+ 
+-	private Form windowForm;
++	// PORT DEVIATION 9 (see PORTING-NOTES.md). Was `private Form windowForm;`, whose ONLY
++	// use in this class was assigning WinForms Cursors. MonoGame's MouseCursor/Mouse.SetCursor
++	// replaces it, so the last WinForms dependency here is gone. We cache the applied cursor
++	// to preserve the original "only assign when it actually changed" behaviour.
++	private MouseCursor currentCursor;
+ 
+@@ -53,25 +45,25 @@
+ 
+-	protected Cursor fingerCursor;
++	protected MouseCursor fingerCursor;
+ 
+-	protected Cursor fingerUpDown;
++	protected MouseCursor fingerUpDown;
+ 
+-	protected Cursor fingerLeftRight;
++	protected MouseCursor fingerLeftRight;
+ 
+-	protected Cursor fingerUpRight;
++	protected MouseCursor fingerUpRight;
+ 
+-	protected Cursor fingerDownRight;
++	protected MouseCursor fingerDownRight;
+ 
+-	protected Cursor fingerMove;
++	protected MouseCursor fingerMove;
+ 
+-	protected Cursor worldCursor;
++	protected MouseCursor worldCursor;
+ 
+-	protected Cursor worldUpDown;
++	protected MouseCursor worldUpDown;
+ 
+-	protected Cursor worldLeftRight;
++	protected MouseCursor worldLeftRight;
+ 
+-	protected Cursor worldUpRight;
++	protected MouseCursor worldUpRight;
+ 
+-	protected Cursor worldDownRight;
++	protected MouseCursor worldDownRight;
+ 
+-	protected Cursor worldMove;
++	protected MouseCursor worldMove;
+ 
+@@ -194,10 +186,3 @@
+ 	{
+-		if (windowForm == null)
+-		{
+-			windowForm = (Form)System.Windows.Forms.Control.FromHandle(Game.Window.Handle);
+-		}
+-		if (windowForm.Cursor != worldCursor)
+-		{
+-			windowForm.Cursor = worldCursor;
+-		}
++		ApplyCursor(worldCursor);
+ 	}
+@@ -206,20 +191,12 @@
+ 	{
+-		if (windowForm == null)
+-		{
+-			windowForm = (Form)System.Windows.Forms.Control.FromHandle(Game.Window.Handle);
+-		}
+-		Cursor cursor = sprite switch
+-		{
+-			MouseSprites.Normal => worldCursor, 
+-			MouseSprites.Moving => worldMove, 
+-			MouseSprites.ResizingNESW => worldUpRight, 
+-			MouseSprites.ResizingNWSE => worldDownRight, 
+-			MouseSprites.ResizingWE => worldLeftRight, 
+-			MouseSprites.ResizingNS => worldUpDown, 
+-			_ => worldCursor, 
+-		};
+-		if (windowForm.Cursor != cursor)
++		ApplyCursor(sprite switch
+ 		{
+-			windowForm.Cursor = cursor;
+-		}
++			MouseSprites.Normal => worldCursor,
++			MouseSprites.Moving => worldMove,
++			MouseSprites.ResizingNESW => worldUpRight,
++			MouseSprites.ResizingNWSE => worldDownRight,
++			MouseSprites.ResizingWE => worldLeftRight,
++			MouseSprites.ResizingNS => worldUpDown,
++			_ => worldCursor,
++		});
+ 	}
+@@ -228,43 +205,95 @@
+ 	{
+-		if (windowForm == null)
+-		{
+-			windowForm = (Form)System.Windows.Forms.Control.FromHandle(Game.Window.Handle);
+-		}
+-		switch (sprite)
+-		{
+-		case MouseSprites.Normal:
+-			windowForm.Cursor = fingerCursor;
+-			break;
+-		case MouseSprites.Moving:
+-			windowForm.Cursor = fingerMove;
+-			break;
+-		case MouseSprites.ResizingNESW:
+-			windowForm.Cursor = fingerUpRight;
+-			break;
+-		case MouseSprites.ResizingNWSE:
+-			windowForm.Cursor = fingerDownRight;
+-			break;
+-		case MouseSprites.ResizingWE:
+-			windowForm.Cursor = fingerLeftRight;
+-			break;
+-		case MouseSprites.ResizingNS:
+-			windowForm.Cursor = fingerUpDown;
+-			break;
+-		}
+-	}
+-
+-	private Cursor CreateCursor(string cursorImage, Microsoft.Xna.Framework.Point hotspot)
+-	{
+-		using Bitmap bitmap = new Bitmap(cursorImage);
+-		using Graphics graphics = Graphics.FromImage(bitmap);
+-		IntPtr hicon = bitmap.GetHicon();
+-		IconInfo icon = default(IconInfo);
+-		GetIconInfo(hicon, ref icon);
+-		icon.xHotspot = hotspot.X;
+-		icon.yHotspot = hotspot.Y;
+-		icon.fIcon = false;
+-		IntPtr handle = CreateIconIndirect(ref icon);
+-		bitmap.Dispose();
+-		graphics.Dispose();
+-		return new Cursor(handle);
++		// NOTE: none of the finger* fields is ever assigned - not here and not in any subclass -
++		// so every branch of this method has always applied a null cursor, i.e. the default
++		// arrow. Preserved exactly (ApplyCursor maps null to MouseCursor.Arrow, which is what
++		// assigning a null Form.Cursor did). Left in place rather than deleted because the
++		// method is called from the interface code and the fields look like an unfinished
++		// feature, not dead weight to silently discard.
++		ApplyCursor(sprite switch
++		{
++			MouseSprites.Normal => fingerCursor,
++			MouseSprites.Moving => fingerMove,
++			MouseSprites.ResizingNESW => fingerUpRight,
++			MouseSprites.ResizingNWSE => fingerDownRight,
++			MouseSprites.ResizingWE => fingerLeftRight,
++			MouseSprites.ResizingNS => fingerUpDown,
++			_ => fingerCursor,
++		});
++	}
++
++	/// <summary>
++	/// PORT DEVIATION 9 (see PORTING-NOTES.md). Replaces `windowForm.Cursor = x`.
++	/// A null cursor means "the default arrow", which is what assigning null to
++	/// Form.Cursor used to do. The cached comparison keeps the original behaviour of only
++	/// touching the cursor when it actually changes.
++	/// </summary>
++	private void ApplyCursor(MouseCursor cursor)
++	{
++		cursor ??= MouseCursor.Arrow;
++		if (currentCursor == cursor)
++		{
++			return;
++		}
++		currentCursor = cursor;
++		Mouse.SetCursor(cursor);
++	}
++
++	/// <summary>
++	/// PORT DEVIATION 9 (see PORTING-NOTES.md).
++	/// Was: load the PNG into a GDI+ Bitmap, GetHicon(), GetIconInfo(), overwrite the hotspot,
++	/// CreateIconIndirect(), and wrap the resulting HICON in a WinForms Cursor - two user32
++	/// P/Invokes plus a System.Drawing dependency. It also leaked both icon handles: nothing
++	/// ever called DestroyIcon on the bitmap's HICON or on the one CreateIconIndirect returned.
++	///
++	/// MonoGame does this natively and takes the hotspot directly, so the whole thing collapses
++	/// to two calls, works on DesktopGL as well as WindowsDX, and leaks nothing.
++	/// </summary>
++	private MouseCursor CreateCursor(string cursorImage, Microsoft.Xna.Framework.Point hotspot)
++	{
++		using FileStream stream = File.OpenRead(cursorImage);
++		Texture2D texture = PadToSquare(Texture2D.FromStream(Game.GraphicsDevice, stream));
++		return MouseCursor.FromTexture2D(texture, hotspot.X, hotspot.Y);
++	}
++
++	/// <summary>
++	/// Works around a bug in MonoGame's WindowsDX MouseCursor implementation, still present as
++	/// of 3.8.5.1.
++	/// <c>MouseCursor.PlatformFromTexture2D</c> builds its GDI+ bitmap with
++	/// <c>new Bitmap(w, h, h * 4, PixelFormat.Format32bppArgb, ...)</c> - but that third
++	/// argument is the STRIDE, i.e. bytes per row, which is <c>w * 4</c>, not <c>h * 4</c>.
++	/// The two only coincide when the image is square, so every non-square cursor comes out
++	/// skewed and garbled. All six of this game's cursors are non-square (25x27 and 32x31),
++	/// so all six were affected.
++	///
++	/// Padding the image out to a square with transparent pixels makes <c>w == h</c>, which
++	/// makes MonoGame's stride arithmetic accidentally correct. The padding is added on the
++	/// right and bottom only, and hotspots are measured from the top-left, so cursor hotspots
++	/// are unaffected. It is also harmless on the SDL/DesktopGL path, which passes an explicit
++	/// pitch and was never affected.
++	///
++	/// Remove this once MonoGame fixes the stride, or if the cursor art is ever re-exported
++	/// square (32x32 is the conventional Windows cursor size anyway).
++	/// </summary>
++	private Texture2D PadToSquare(Texture2D texture)
++	{
++		int side = Math.Max(texture.Width, texture.Height);
++		if (texture.Width == side && texture.Height == side)
++		{
++			return texture;
++		}
++
++		Color[] source = new Color[texture.Width * texture.Height];
++		texture.GetData(source);
++
++		// Color default is (0,0,0,0), so the padding is fully transparent.
++		Color[] padded = new Color[side * side];
++		for (int y = 0; y < texture.Height; y++)
++		{
++			Array.Copy(source, y * texture.Width, padded, y * side, texture.Width);
++		}
++
++		Texture2D square = new Texture2D(Game.GraphicsDevice, side, side, mipmap: false, SurfaceFormat.Color);
++		square.SetData(padded);
++		texture.Dispose();
++		return square;
+ 	}
+@@ -303,8 +332,2 @@
+ 	}
+-
+-	[DllImport("user32.dll")]
+-	private static extern IntPtr CreateIconIndirect(ref IconInfo icon);
+-
+-	[DllImport("user32.dll")]
+-	private static extern IntPtr GetIconInfo(IntPtr ptr, ref IconInfo icon);
+ }
+--- a/UWGame/ClientSide/Interface/HUD_Windows/DataSheet.cs
++++ b/UWGame/ClientSide/Interface/HUD_Windows/DataSheet.cs
+@@ -6,2 +6,3 @@
+ using Microsoft.Xna.Framework;
++using Microsoft.Xna.Framework.Input;
+ using UWGame.Client.Interface;
+@@ -375,4 +376,66 @@
+ 		}
++		else if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			UpdateWheelScrolling();
++		}
++	}
++
++	/// <summary>
++	/// UNHIDDEN MOD: mouse wheel scrolls the expanded grid, in addition to the studio's
++	/// hover-over-the-arrow scrolling.
++	///
++	/// Polled rather than driven off InputData.MouseWheelMove. That is an event GUIManager
++	/// already subscribes to, and adding a second subscriber from a window that comes and goes
++	/// means owning an unsubscribe; polling a wheel value here is self-contained and cannot
++	/// leak. The delta baseline is per-instance for the same reason - the original patch kept it
++	/// in a static that Client.HandleInput also wrote to, which coupled two unrelated classes.
++	///
++	/// Only runs in the else branch, so a wheel turn cannot fight an arrow hover.
++	/// </summary>
++	private void UpdateWheelScrolling()
++	{
++		int wheel = Mouse.GetState().ScrollWheelValue;
++		if (!wheelBaselineValid)
++		{
++			wheelBaseline = wheel;
++			wheelBaselineValid = true;
++			return;
++		}
++		int delta = wheel - wheelBaseline;
++		if (delta == 0 || currentlyShownExpandedGrid == null)
++		{
++			return;
++		}
++		wheelBaseline = wheel;
++
++		// A fixed step per notch, rather than the time-scaled speed the hover path uses - a
++		// wheel notch is a discrete event, not a duration.
++		if (delta < 0)
++		{
++			currentlyShownExpandedGrid.Y -= wheelScrollStep;
++			if (IsAtBottom(currentlyShownExpandedGrid))
++			{
++				currentlyShownExpandedGrid.Y = expandedContentViewPort.Height - currentlyShownExpandedGrid.Height;
++				HideScrollDownArea();
++			}
++			ShowScrollUpArea();
++		}
++		else
++		{
++			currentlyShownExpandedGrid.Y += wheelScrollStep;
++			if (IsAtTop(currentlyShownExpandedGrid))
++			{
++				currentlyShownExpandedGrid.Y = 0;
++				HideScrollUpArea();
++			}
++			ShowScrollDownArea();
++		}
+ 	}
+ 
++	private const int wheelScrollStep = 30;
++
++	private int wheelBaseline;
++
++	private bool wheelBaselineValid;
++
+ 	private void AdaptContentToWindow()
+--- a/UWGame/ClientSide/Interface/HUD_Windows/StockpileWindow.cs
++++ b/UWGame/ClientSide/Interface/HUD_Windows/StockpileWindow.cs
+@@ -608,2 +608,9 @@
+ 		outerGrid.EndAddingEntries();
++		// UNHIDDEN MOD: sort the stockpile the way the inventory panel already sorts itself.
++		// InventoryPanel.DoCategorySorting is the studio's own routine, used at
++		// InventoryPanel.cs:949; the stockpile window just never called it.
++		if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			InventoryPanel.DoCategorySorting(outerGrid, categoryGridsThatWereAddedTo, Grid.Sorting.Ascending);
++		}
+ 	}
+--- a/UWGame/ClientSide/Interface/InGameInterface.cs
++++ b/UWGame/ClientSide/Interface/InGameInterface.cs
+@@ -3,3 +3,2 @@
+ using System.Text;
+-using System.Windows.Forms;
+ using GameStateManagement;
+@@ -270,3 +269,11 @@
+ 
+-	public Help Help;
++	// PORT DEVIATION 1 (see PORTING-NOTES.md).
++	// The original IL declares this field as System.Windows.Forms.Help - the game has no type
++	// of its own called Help, so a `using System.Windows.Forms;` (since removed) silently bound it
++	// BCL type. On .NET Framework 4.5 that was a plain instantiable class; on .NET 8 it is a
++	// `static class`, and C# forbids a field of static type (CS0723).
++	// The field is dead: nothing in the entire 2170-type assembly ever reads or writes it.
++	// Retyped to object to keep the member (and its name) present for anything that walks
++	// fields reflectively, without pulling in the now-static BCL type.
++	public object Help;
+ 
+--- a/UWGame/ClientSide/Interface/Inventory/InventorySettings.cs
++++ b/UWGame/ClientSide/Interface/Inventory/InventorySettings.cs
+@@ -401,2 +401,8 @@
+ 		processesToDo = null;
++		// UNHIDDEN MOD: the added item is producible but would never be offered, because
++		// attainability is computed from the tables as they stood before the addition.
++		if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			UWGame.Mods.UnhiddenMod.RegisterAttainability(attainableInfo);
++		}
+ 	}
+--- a/UWGame/ClientSide/Interface/MainMenuPanel.cs
++++ b/UWGame/ClientSide/Interface/MainMenuPanel.cs
+@@ -97,2 +97,29 @@
+ 		textButton5.Width = 106;
++		// UNHIDDEN MOD: EDIT and TEST reach the map editor.
++		//
++		// btEditMap_Click and btTestMap_Click below are the STUDIO'S OWN handlers, already
++		// present and already calling MainMenuScreen.EditMap / TestMap - nothing was subscribed
++		// to them. The whole feature was built and then left without a button, which is what
++		// makes this mod's name apt.
++		//
++		// The coordinates are the patch's own: they fill the empty slot at y=76 directly above
++		// OPTIONS, two 59px buttons where one 106px one would go. Not num2, which by this point
++		// has advanced to the CREDITS/EXIT column and would stack them under CREDITS.
++		if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			TextButton textButton6 = new TextButton(Interface.gui);
++			Window.Add(textButton6);
++			textButton6.Init(TextButton.TextButtonType.White);
++			textButton6.Position = new Point(142, 76);
++			textButton6.Text = "EDIT";
++			textButton6.Click += btEditMap_Click;
++			textButton6.Width = 59;
++			TextButton textButton7 = new TextButton(Interface.gui);
++			Window.Add(textButton7);
++			textButton7.Init(TextButton.TextButtonType.White);
++			textButton7.Position = new Point(198, 76);
++			textButton7.Text = "TEST";
++			textButton7.Click += btTestMap_Click;
++			textButton7.Width = 59;
++		}
+ 	}
+--- a/UWGame/ClientSide/Interface/SaveLoadGamePanel.cs
++++ b/UWGame/ClientSide/Interface/SaveLoadGamePanel.cs
+@@ -4,2 +4,3 @@
+ using System.IO.Compression;
++using System.Linq;
+ using GameStateManagement;
+@@ -275,2 +276,9 @@
+ 		List<Tuple<string, long, SnapshotHeader>> snapshotHeaders = GetSnapshotHeaders(listOfSavedGamePaths);
++		// UNHIDDEN MOD: newest save first. The Harmony patch had to replace this whole method
++		// with a reflection-driven copy to get one sort in; from inside the assembly it is a
++		// sort.
++		if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			snapshotHeaders = snapshotHeaders.OrderByDescending((Tuple<string, long, SnapshotHeader> x) => x.Item3.Timestamp).ToList();
++		}
+ 		grid.BeginAddingEntries();
+--- a/UWGame/ClientSide/MainMenu/Intro/IntroVideoScreen.cs
++++ b/UWGame/ClientSide/MainMenu/Intro/IntroVideoScreen.cs
+@@ -6,4 +6,4 @@
+ using Microsoft.Xna.Framework.Input;
+-using Microsoft.Xna.Framework.Media;
+ using UWGame.Control;
++using UWGame.Port;
+ 
+@@ -11,9 +11,20 @@
+ 
++/// <summary>
++/// The full-screen intro playback reached from MainMenuScreen.ShowIntro.
++///
++/// PORT DEVIATION 17 (see PORTING-NOTES.md). Was a MonoGame VideoPlayer on
++/// Content/MainMenu/TauCetiMainMenu.wmv; now plays MainMenuIntro.uwanim through
++/// <see cref="MenuAnimation"/>, like BackgroundScreen.
++///
++/// This screen also carried a live bug worth recording, now gone with the video player: its
++/// Update assigned `player.IsLooped = true`, and MonoGame's VideoPlayer throws
++/// NotImplementedException from PlatformSetIsLooped. PORT DEVIATION 5 removed that assignment
++/// from BackgroundScreen but missed this one, so reaching this screen threw. A frame sequence
++/// loops by construction, so there is nothing to set.
++/// </summary>
+ internal class IntroVideoScreen : GameScreen
+ {
+-	private Video video;
++	private MenuAnimation animation;
+ 
+-	private VideoPlayer player;
+-
+-	private Texture2D videoTexture;
++	private Texture2D animationTexture;
+ 
+@@ -33,7 +44,6 @@
+ 		base.LoadContent();
+-		content = new ContentManager(base.Controller.Game.Services);
++		content = new UWGame.Port.UwContentManager(base.Controller.Game.Services);
+ 		content.RootDirectory = "Content";
+ 		spriteBatch = new SpriteBatch(base.Controller.GraphicsDevice);
+-		video = content.Load<Video>("MainMenu/TauCetiMainMenu");
+-		player = new VideoPlayer();
++		animation = MenuAnimation.Shared;
+ 	}
+@@ -43,11 +53,11 @@
+ 		base.Controller.GraphicsDevice.Clear(Color.Black);
+-		if (player.State != MediaState.Stopped)
++		if (animation != null)
+ 		{
+-			videoTexture = player.GetTexture();
++			animationTexture = animation.GetFrame(base.Controller.GraphicsDevice, gameTime);
+ 		}
+ 		Rectangle destinationRectangle = new Rectangle(base.Controller.GraphicsDevice.Viewport.X, base.Controller.GraphicsDevice.Viewport.Y, 1280, 720);
+-		if (videoTexture != null)
++		if (animationTexture != null)
+ 		{
+ 			spriteBatch.Begin();
+-			spriteBatch.Draw(videoTexture, destinationRectangle, Color.White);
++			spriteBatch.Draw(animationTexture, destinationRectangle, Color.White);
+ 			spriteBatch.End();
+@@ -68,7 +78,5 @@
+ 		base.Update(gameTime, otherScreenHasFocus, coveredByOtherScreen);
+-		if (base.IsActive && player.State == MediaState.Stopped)
+-		{
+-			player.IsLooped = true;
+-			player.Play(video);
+-		}
++		// The animation loops on its own; there is no stopped state to restart. If the .uwanim
++		// file is absent this screen shows black until Escape, which is the same as the old
++		// behaviour when the video failed to start.
+ 	}
+@@ -77,2 +85,5 @@
+ 	{
++		// The shared animation outlives this screen - BackgroundScreen uses it too.
++		animation = null;
++		animationTexture = null;
+ 		content.Unload();
+--- a/UWGame/ClientSide/MainMenu/Scenario/SelectScenarioPanel.cs
++++ b/UWGame/ClientSide/MainMenu/Scenario/SelectScenarioPanel.cs
+@@ -63,2 +63,9 @@
+ 	{
++		// UNHIDDEN MOD: RGScenarioLoader lists only the built-in scenarios. AllScenarioLoader
++		// adds the ones in user/Scenarios, which is what makes user-authored scenarios show up
++		// in this picker at all.
++		if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			return UWGame.Mods.UnhiddenMod.AllScenarioHeaders();
++		}
+ 		return (from s in RGScenarioLoader.LoadAllScenarioHeaders()
+--- a/UWGame/ClientSide/Map/GameWorldRenderer.cs
++++ b/UWGame/ClientSide/Map/GameWorldRenderer.cs
+@@ -28,2 +28,3 @@
+ using UWGame.SimSide.Vegetation;
++using UWGame.Port;
+ 
+@@ -395,3 +396,23 @@
+ 		int height = The.Client.Controller.DrawArea.Height;
+-		DiffuseMSRenderTarget = new RenderTarget2D(graphicsDevice, width, height, mipMap: false, presentationParameters.BackBufferFormat, presentationParameters.DepthStencilFormat, presentationParameters.MultiSampleCount, RenderTargetUsage.PreserveContents);
++		// PORT DEVIATION 15 (see PORTING-NOTES.md) - DesktopGL only.
++		//
++		// This is the only render target in the pipeline that asks for multisampling (the game
++		// requests 4 samples in UnclaimedWorld.cs:74), and on DesktopGL nothing written to it
++		// ever landed: a centre-pixel readback taken immediately after Clear(Color.White)
++		// returned R0 G0 B0 A0, alpha included, so not even the clear took effect. Every other
++		// target here is built identically but with a literal 0 for the sample count, and those
++		// all work.
++		//
++		// WindowsDX keeps the requested count. MonoGame's PlatformResolveRenderTargets resolves
++		// a multisampled target into its own texture when it is unbound, so the SpriteBatch blit
++		// that follows reads a genuinely antialiased result - the samples ARE consumed, just not
++		// by an explicit resolve call. Forcing 0 on both targets silently dropped 4x MSAA from
++		// the world pass on the shipping DirectX build, which is not a trade this deviation is
++		// entitled to make: it exists to work around a GL backend limitation, not to change how
++		// the game looks where it already worked.
++		int diffuseMSSamples = presentationParameters.MultiSampleCount;
++#if UW_GL
++		diffuseMSSamples = 0;
++#endif
++		DiffuseMSRenderTarget = new RenderTarget2D(graphicsDevice, width, height, mipMap: false, presentationParameters.BackBufferFormat, presentationParameters.DepthStencilFormat, diffuseMSSamples, RenderTargetUsage.PreserveContents);
+ 		edgeDetectNormalDepthRenderTarget = new RenderTarget2D(graphicsDevice, width, height, mipMap: false, presentationParameters.BackBufferFormat, presentationParameters.DepthStencilFormat, 0, RenderTargetUsage.PreserveContents);
+@@ -2018,2 +2039,3 @@
+ 
++	/// <summary>
+ 	private void DrawTopAndBottomEdges(Rectangle rect, Rectangle sourcerect)
+--- a/UWGame/ClientSide/Screens/LoadingScreen.cs
++++ b/UWGame/ClientSide/Screens/LoadingScreen.cs
+@@ -108,3 +108,3 @@
+ 		{
+-			content = new ContentManager(base.Controller.Game.Services);
++			content = new UWGame.Port.UwContentManager(base.Controller.Game.Services);
+ 			content.RootDirectory = "Content";
+--- a/UWGame/Control/BackgroundScreen.cs
++++ b/UWGame/Control/BackgroundScreen.cs
+@@ -4,4 +4,4 @@
+ using Microsoft.Xna.Framework.Graphics;
+-using Microsoft.Xna.Framework.Media;
+-using UWGame.SimSide;
++using GameStateManagement;
++using UWGame.Port;
+ 
+@@ -17,7 +17,22 @@
+ 
+-	private Video video;
++	// PORT DEVIATION 17 (see PORTING-NOTES.md).
++	//
++	// Was a MonoGame VideoPlayer playing Content/MainMenu/TauCetiMainMenu.wmv. It now plays
++	// MainMenuIntro.uwanim from the game root - the same footage as a motion-JPEG frame
++	// sequence, decoded by the StbImageSharp already inside MonoGame.
++	//
++	// This retires PORT DEVIATIONS 5, 7 and 11, which all existed to work around VideoPlayer:
++	//
++	//   5 - `IsLooped = true` throws NotImplementedException in MonoGame (the studio's 3.6 fork
++	//       had an empty PlatformSetIsLooped, so the assignment never did anything).
++	//   7 - a second concurrent VideoPlayer never reaches MediaState.Playing, so opening Load
++	//       Game on top of the menu threw "cannot start video". Hence one shared player.
++	//   11 - MonoGame has no DesktopGL VideoPlayer at all, so GL had no menu animation.
++	//
++	// None of the three has anything to work around now, and GL gets the animation for the first
++	// time. MenuAnimation is shared for the same reason the VideoPlayer was: several menu screens
++	// sit on the stack at once and must not each run their own copy.
++	private MenuAnimation animation;
+ 
+-	private static VideoPlayer player = new VideoPlayer();
+-
+-	private Texture2D videoTexture;
++	private Texture2D animationTexture;
+ 
+@@ -33,4 +48,2 @@
+ 
+-	private Regulator videoRestartRegulator;
+-
+ 	public BackgroundScreen(Background background)
+@@ -46,12 +59,14 @@
+ 		{
+-			content = new ContentManager(base.Controller.Game.Services);
++			content = new UWGame.Port.UwContentManager(base.Controller.Game.Services);
+ 			content.RootDirectory = "Content";
+ 		}
++
++		// MenuAnimation.Shared is null when MainMenuIntro.uwanim is absent, which is the
++		// supported way to turn the animation off - the still image is then used, exactly as it
++		// already is when the PlayVideo option is cleared.
+ 		if (base.Controller.Options.PlayVideo)
+ 		{
+-			video = base.Controller.Content.Load<Video>("MainMenu/TauCetiMainMenu");
+-			player.Play(video);
+-			videoRestartRegulator = new Regulator(null, 1.0 / video.Duration.TotalSeconds, "BacgroundScreen");
++			animation = MenuAnimation.Shared;
+ 		}
+-		else
++		if (animation == null)
+ 		{
+@@ -64,6 +79,7 @@
+ 	{
+-		if (base.Controller.Options.PlayVideo)
+-		{
+-			player.Stop();
+-		}
++		// The shared animation is deliberately NOT disposed - other BackgroundScreens may still
++		// be on the stack using it, which is the same reason the old shared VideoPlayer was left
++		// alone here.
++		animation = null;
++		animationTexture = null;
+ 		content.Unload();
+@@ -74,6 +90,5 @@
+ 		base.Update(gameTime, otherScreenHasFocus, coveredByOtherScreen: false);
+-		if (base.Controller.Options.PlayVideo && player.State == MediaState.Stopped)
+-		{
+-			player.Play(video);
+-		}
++		// Nothing to do: the animation advances in Draw. Restarting a stopped video used to
++		// happen here - a frame sequence simply loops, so there is no stopped state to recover
++		// from and no way for the background to stay frozen.
+ 	}
+@@ -95,10 +110,14 @@
+ 		base.Controller.GraphicsDevice.Clear(Color.Black);
+-		if (base.Controller.Options.PlayVideo && player != null && player.State != MediaState.Stopped && player.Video != null)
++
++		if (animation != null)
+ 		{
+-			videoTexture = player.GetTexture();
++			// The destination rectangle is derived from 1280x720 and scaled to the draw area, so
++			// the stored frames need not match the screen or the original video size - they are
++			// stretched to the same rectangle the video was.
++			animationTexture = animation.GetFrame(base.Controller.GraphicsDevice, gameTime);
+ 		}
+-		if (videoTexture != null)
++		if (animationTexture != null)
+ 		{
+ 			base.Controller.SpriteBatch.Begin();
+-			base.Controller.SpriteBatch.Draw(videoTexture, backgroundDest, new Color(transitionAlpha, transitionAlpha, transitionAlpha));
++			base.Controller.SpriteBatch.Draw(animationTexture, backgroundDest, new Color(transitionAlpha, transitionAlpha, transitionAlpha));
+ 			base.Controller.SpriteBatch.End();
+--- a/UWGame/Control/Controller.cs
++++ b/UWGame/Control/Controller.cs
+@@ -8,3 +8,2 @@
+ using System.Threading;
+-using System.Windows.Forms;
+ using GameStateManagement;
+@@ -133,3 +132,3 @@
+ 		this.game = game;
+-		content = new ContentManager(game.Services);
++		content = new UWGame.Port.UwContentManager(game.Services);
+ 		content.RootDirectory = "Content";
+@@ -206,3 +205,8 @@
+ 		{
+-			((Form)System.Windows.Forms.Control.FromHandle(game.Window.Handle)).Location = new System.Drawing.Point(10, 10);
++			// PORT DEVIATION 10 (see PORTING-NOTES.md). Game 1.0.4.8 added this windowed-mode
++			// placement as ((Form)Control.FromHandle(Window.Handle)).Location = Point(10, 10).
++			// MonoGame exposes GameWindow.Position directly and supports it on both WindowsDX
++			// and DesktopGL, so no WinForms and no platform split is needed - which matters
++			// because System.Windows.Forms does not exist on the GL target at all.
++			game.Window.Position = new Microsoft.Xna.Framework.Point(10, 10);
+ 		}
+--- a/UWGame/SimSide/AI/Goals/GoalEat.cs
++++ b/UWGame/SimSide/AI/Goals/GoalEat.cs
+@@ -188,2 +188,8 @@
+ 		}
++		// DECOMPILER ARTIFACT, not a port deviation. ILSpy renders the only declaration of
++		// foodData as `out var foodData` inside the lambda passed to GetNearbyEntities above,
++		// whose scope does not reach here, so decomp/ does not compile as written. The original
++		// clearly declared it in this method's scope. Declared here rather than edited in
++		// decomp/, which stays the untouched reference.
++		IKnownEntityData foodData;
+ 		foreach (Tuple<IKnownEntityData, float> item3 in list.OrderByDescending((Tuple<IKnownEntityData, float> s) => s.Item2))
+--- a/UWGame/SimSide/AllGameData/BaseDataLoader.cs
++++ b/UWGame/SimSide/AllGameData/BaseDataLoader.cs
+@@ -1565,3 +1565,9 @@
+ 	{
+-		return ProcessLoader.InitProcessTypes();
++		List<ProcessType> list = ProcessLoader.InitProcessTypes();
++		// UNHIDDEN MOD: the makePeatCharcoal recipe.
++		if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			UWGame.Mods.UnhiddenMod.AddProcesses(list);
++		}
++		return list;
+ 	}
+@@ -8521,2 +8527,10 @@
+ 		InitMiscEntityTypes(list);
++		// UNHIDDEN MOD: adds peat charcoal and retags forge fuel. Hooked here rather than at the
++		// end of ItemLoader.Init / StructureLoader.Init, which is where the Harmony patch
++		// postfixed, because both loaders feed this one list and the order is the same.
++		if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			UWGame.Mods.UnhiddenMod.AddItems(list);
++			UWGame.Mods.UnhiddenModSmithies.Replace(list);
++		}
+ 		return list;
+--- a/UWGame/SimSide/AllGameData/DataLoader.cs
++++ b/UWGame/SimSide/AllGameData/DataLoader.cs
+@@ -412,3 +412,9 @@
+ 		}
+-		The.LoadScreen.Progress(nextStep.ToString(), (int)((float)lengthOfNextStepInMilliseconds * progressFactor));
++		// PORT DEVIATION 13 (see PORTING-NOTES.md). Was an unguarded
++		// `The.LoadScreen.Progress(...)`. The null check is what lets the data tables be loaded
++		// with no UI attached, which tools/DataExport relies on to run the export headlessly -
++		// progress reporting is the data layer's only dependency on the load screen, and it is
++		// inherently optional. Behaviour is unchanged whenever a load screen exists, i.e. in
++		// every path the game itself takes.
++		The.LoadScreen?.Progress(nextStep.ToString(), (int)((float)lengthOfNextStepInMilliseconds * progressFactor));
+ 		queueState = nextStep;
+--- a/UWGame/SimSide/CustomXmlSerializer.cs
++++ b/UWGame/SimSide/CustomXmlSerializer.cs
+@@ -1,7 +1,4 @@
+ using System;
+-using System.CodeDom;
+-using System.CodeDom.Compiler;
+ using System.Collections.Generic;
+ using System.IO;
+-using System.Linq;
+ using System.Reflection;
+@@ -10,3 +7,2 @@
+ using System.Xml.Serialization;
+-using Microsoft.CSharp;
+ 
+@@ -56,20 +52,2 @@
+ 
+-	private class TypeData
+-	{
+-		public int Index { get; set; }
+-
+-		public XmlTypeMappingBase TypeMapping { get; set; }
+-	}
+-
+-	private class MemberData
+-	{
+-		public bool IsField { get; set; }
+-
+-		public Type MemberType { get; set; }
+-
+-		public string Name { get; set; }
+-
+-		public object[] CustomAttributes { get; set; }
+-	}
+-
+ 	private class ProxyAssemblyData
+@@ -85,76 +63,11 @@
+ 
+-	private const string UNDERLYING_INSTANCE_NAME = "_underlyingInstance";
+-
+-	private const string PROXY_DATA_NAME = "_proxyData";
+-
+-	private CodeCompileUnit _unit;
+-
+-	private CodeNamespace _ns;
+-
+-	private XmlProxyData _proxyData;
+-
+-	private CodeTypeDeclaration _cl;
+-
+-	private Dictionary<Type, TypeData> _typeDataMap;
+-
+-	private List<MemberData> _memberList;
+-
+ 	private static Dictionary<Type, ProxyAssemblyData> _proxyAssemblyDataMap = new Dictionary<Type, ProxyAssemblyData>();
+ 
+-	private static Dictionary<Type, object> _xmlCustomAttributesInstances = new Dictionary<Type, object>();
+-
+-	public CodeCompileUnit GenerateXmlProxy(XmlProxyData proxyData)
+-	{
+-		_proxyData = proxyData;
+-		_unit = new CodeCompileUnit();
+-		_ns = new CodeNamespace("dummy.d" + Guid.NewGuid().ToString().Replace("-", ""));
+-		_unit.Namespaces.Add(_ns);
+-		_cl = new CodeTypeDeclaration(proxyData.ProxiedType.Name);
+-		_cl.IsClass = true;
+-		_cl.Attributes = MemberAttributes.Public;
+-		_cl.BaseTypes.Add(typeof(ISerializationProxy));
+-		_ns.Types.Add(_cl);
+-		GenerateMembers();
+-		return _unit;
+-	}
+-
+-	public Assembly CompileAssembly(XmlProxyData proxyData)
+-	{
+-		string proxyTypeName;
+-		return CompileAssembly(proxyData, out proxyTypeName);
+-	}
+-
+-	public Assembly CompileAssembly(XmlProxyData proxyData, out string proxyTypeName)
+-	{
+-		CodeCompileUnit codeCompileUnit = GenerateXmlProxy(proxyData);
+-		proxyTypeName = _ns.Name + "." + _cl.Name;
+-		CodeDomProvider codeDomProvider = CodeDomProvider.CreateProvider("c#");
+-		CompilerParameters compilerParameters = new CompilerParameters();
+-		compilerParameters.GenerateInMemory = true;
+-		Assembly entryAssembly = Assembly.GetEntryAssembly();
+-		compilerParameters.ReferencedAssemblies.Add(entryAssembly.Location);
+-		AssemblyName[] referencedAssemblies = entryAssembly.GetReferencedAssemblies();
+-		foreach (AssemblyName assemblyRef in referencedAssemblies)
+-		{
+-			compilerParameters.ReferencedAssemblies.Add(Assembly.Load(assemblyRef).Location);
+-		}
+-		compilerParameters.GenerateExecutable = false;
+-		CompilerResults compilerResults = codeDomProvider.CompileAssemblyFromDom(compilerParameters, codeCompileUnit);
+-		if (compilerResults.Errors.Count > 0)
+-		{
+-			throw new ApplicationException("Compilation erros: " + compilerResults.Errors[0].ErrorText);
+-		}
+-		return compilerResults.CompiledAssembly;
+-	}
+-
+-	public string GetProxyCode(XmlProxyData proxyData)
+-	{
+-		return GenerateCode(GenerateXmlProxy(proxyData));
+-	}
+-
+-	public void SaveProxyCodeToFile(XmlProxyData proxyData, string filePath)
+-	{
+-		GenerateXmlProxy(proxyData);
+-		SaveFile(filePath);
+-	}
++	/// <summary>
++	/// PORT DEVIATION 12 (see PORTING-NOTES.md). Namespace the generated proxies are emitted
++	/// into. Was <c>"dummy.d" + Guid.NewGuid()</c> - a fresh namespace per run, which was fine
++	/// when the proxy was compiled into a throwaway in-memory assembly but makes the source
++	/// impossible to pre-generate. tools/XmlProxyGen asserts this value matches what it emits.
++	/// </summary>
++	public const string GeneratedProxyNamespace = "UWGame.Generated.XmlProxies";
+ 
+@@ -240,14 +153,48 @@
+ 
++	/// <summary>
++	/// PORT DEVIATION 12 (see PORTING-NOTES.md).
++	///
++	/// Was: generate a proxy class for <paramref name="proxyData"/>.ProxiedType with CodeDom and
++	/// compile it into an in-memory assembly via
++	/// <c>CodeDomProvider.CompileAssemblyFromDom</c>. That method throws
++	/// <c>PlatformNotSupportedException</c> on .NET 8 - runtime C# compilation was removed from
++	/// the framework, and the System.CodeDom package keeps only the code-GENERATION half.
++	///
++	/// The proxies are now generated at build time by tools/XmlProxyGen, whose
++	/// ProxyCodeGenerator IS this class's former CodeDom half, moved rather than rewritten - so
++	/// the emitted proxies are the same source the retail build compiled, and XmlSerializer sees
++	/// an identical shape. That keeps the on-disk XML format of every data/ file byte-compatible,
++	/// which is the whole point: these proxies are what the data/BaseData and data/Scenarios mod
++	/// hooks deserialize through (deviation 13).
++	///
++	/// Moving it also drops System.CodeDom from the game's references. The WindowsDX target got
++	/// that assembly free from the Microsoft.WindowsDesktop.App shared framework, but the
++	/// DesktopGL target builds as net8.0, where it is a NuGet package - so the portable build no
++	/// longer carries a package for code it could never execute.
++	///
++	/// <c>ProxyAssembly</c> stays null - there is no longer a separate assembly - and nothing
++	/// reads it.
++	/// </summary>
+ 	private static void GenerateProxyAssembly(XmlProxyData proxyData)
+ 	{
+-		ProxyAssemblyData proxyAssemblyData = new ProxyAssemblyData
+-		{
+-			XmlProxyData = proxyData
+-		};
+-		_proxyAssemblyDataMap[proxyData.ProxiedType] = proxyAssemblyData;
+-		string proxyTypeName;
+-		Assembly assembly = (proxyAssemblyData.ProxyAssembly = new CustomXmlSerializer().CompileAssembly(proxyData, out proxyTypeName));
+-		proxyAssemblyData.ProxyType = assembly.GetType(proxyTypeName);
+-		ConstructorInfo constructor = proxyAssemblyData.ProxyType.GetConstructor(new Type[0]);
+-		proxyAssemblyData.ProxyInstance = (ISerializationProxy)constructor.Invoke(new object[0]);
++		ProxyAssemblyData proxyAssemblyData = new ProxyAssemblyData();
++		proxyAssemblyData.XmlProxyData = proxyData;
++		ProxyAssemblyData proxyAssemblyData2 = proxyAssemblyData;
++		_proxyAssemblyDataMap[proxyData.ProxiedType] = proxyAssemblyData2;
++
++		if (!Generated.XmlProxies.XmlProxyRegistry.ProxyTypes.TryGetValue(proxyData.ProxiedType, out Type proxyType))
++		{
++			// Reachable only if a type gained a _proxyData field without the proxies being
++			// regenerated. Say which type and how to fix it, rather than letting a null
++			// ProxyType surface as a NullReferenceException inside XmlSerializer.
++			_proxyAssemblyDataMap.Remove(proxyData.ProxiedType);
++			throw new InvalidOperationException(
++				"No pre-generated XML serialization proxy for " + proxyData.ProxiedType.FullName +
++				". Run build/20-generate-xml-proxies.sh and rebuild. (Proxies cannot be compiled " +
++				"at runtime on .NET 8 - see PORT DEVIATION 12 in PORTING-NOTES.md.)");
++		}
++
++		proxyAssemblyData2.ProxyType = proxyType;
++		ConstructorInfo constructor = proxyType.GetConstructor(new Type[0]);
++		proxyAssemblyData2.ProxyInstance = (ISerializationProxy)constructor.Invoke(new object[0]);
+ 	}
+@@ -343,260 +290,2 @@
+ 	}
+-
+-	private void GenerateMembers()
+-	{
+-		InitTypeAndFieldData();
+-		CreateConstructorAndFields();
+-		CreateProxyInterfaceMembers();
+-		CreateProperties();
+-	}
+-
+-	private void InitTypeAndFieldData()
+-	{
+-		int num = 0;
+-		_typeDataMap = new Dictionary<Type, TypeData>();
+-		foreach (XmlTypeMappingBase typeMapping in _proxyData.TypeMappings)
+-		{
+-			_typeDataMap[typeMapping.ProxiedType] = new TypeData
+-			{
+-				Index = num++,
+-				TypeMapping = typeMapping
+-			};
+-		}
+-		_memberList = new List<MemberData>();
+-		_memberList.AddRange(from f in _proxyData.ProxiedType.GetFields(BindingFlags.Instance | BindingFlags.Public)
+-			select new MemberData
+-			{
+-				IsField = true,
+-				MemberType = f.FieldType,
+-				Name = f.Name,
+-				CustomAttributes = f.GetCustomAttributes(inherit: true)
+-			});
+-		_memberList.AddRange(from p in _proxyData.ProxiedType.GetProperties(BindingFlags.Instance | BindingFlags.Public)
+-			where p.GetGetMethod() != null && p.GetSetMethod() != null
+-			select new MemberData
+-			{
+-				IsField = false,
+-				MemberType = p.PropertyType,
+-				Name = p.Name,
+-				CustomAttributes = p.GetCustomAttributes(inherit: true)
+-			});
+-	}
+-
+-	private void CreateProperties()
+-	{
+-		foreach (MemberData member in _memberList)
+-		{
+-			CodeMemberProperty codeMemberProperty = AddProperty(member.MemberType, member.Name);
+-			if (_typeDataMap.ContainsKey(member.MemberType))
+-			{
+-				TypeData typeData = _typeDataMap[member.MemberType];
+-				codeMemberProperty.Type = new CodeTypeReference(typeData.TypeMapping.ProxyType);
+-				CodeExpression targetObject = new CodeFieldReferenceExpression(new CodeTypeReferenceExpression(_cl.Name), "_proxyData");
+-				targetObject = new CodeFieldReferenceExpression(targetObject, "TypeMappings");
+-				targetObject = new CodeIndexerExpression(targetObject, new CodePrimitiveExpression(typeData.Index));
+-				targetObject = new CodeCastExpression(typeData.TypeMapping.GetType(), targetObject);
+-				codeMemberProperty.GetStatements.Add(new CodeMethodReturnStatement(new CodeMethodInvokeExpression(new CodeMethodReferenceExpression(targetObject, "GetterMethod"), new CodeFieldReferenceExpression(GetThisField("_underlyingInstance"), member.Name))));
+-				codeMemberProperty.SetStatements.Add(new CodeAssignStatement(new CodeFieldReferenceExpression(GetThisField("_underlyingInstance"), member.Name), new CodeMethodInvokeExpression(new CodeMethodReferenceExpression(targetObject, "SetterMethod"), new CodePropertySetValueReferenceExpression())));
+-			}
+-			else
+-			{
+-				codeMemberProperty.GetStatements.Add(new CodeMethodReturnStatement(new CodeFieldReferenceExpression(GetThisField("_underlyingInstance"), member.Name)));
+-				codeMemberProperty.SetStatements.Add(new CodeAssignStatement(new CodeFieldReferenceExpression(GetThisField("_underlyingInstance"), member.Name), new CodePropertySetValueReferenceExpression()));
+-			}
+-			AddCustomAttributes(codeMemberProperty, member);
+-		}
+-	}
+-
+-	private void AddCustomAttributes(CodeMemberProperty p, MemberData data)
+-	{
+-		if (data.CustomAttributes == null)
+-		{
+-			return;
+-		}
+-		object[] customAttributes = data.CustomAttributes;
+-		foreach (object obj in customAttributes)
+-		{
+-			Type type = obj.GetType();
+-			if (!type.Name.StartsWith("Xml"))
+-			{
+-				continue;
+-			}
+-			CodeAttributeDeclaration codeAttributeDeclaration = new CodeAttributeDeclaration(new CodeTypeReference(type));
+-			PropertyInfo[] properties = type.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+-			foreach (PropertyInfo propertyInfo in properties)
+-			{
+-				if (propertyInfo.DeclaringType == type && (propertyInfo.PropertyType.IsPrimitive || propertyInfo.PropertyType == typeof(string) || propertyInfo.PropertyType == typeof(Type)))
+-				{
+-					object value = propertyInfo.GetValue(obj, null);
+-					if (!IsCustomAttributeDefaultValue(type, propertyInfo, value))
+-					{
+-						codeAttributeDeclaration.Arguments.Add(new CodeAttributeArgument(propertyInfo.Name, (propertyInfo.PropertyType == typeof(Type) && value != null) ? ((CodeExpression)new CodeTypeOfExpression((Type)value)) : ((CodeExpression)new CodePrimitiveExpression(value))));
+-					}
+-				}
+-			}
+-			p.CustomAttributes.Add(codeAttributeDeclaration);
+-		}
+-	}
+-
+-	private bool IsCustomAttributeDefaultValue(Type attrType, PropertyInfo pi, object value)
+-	{
+-		if (!_xmlCustomAttributesInstances.ContainsKey(attrType))
+-		{
+-			ConstructorInfo constructor = attrType.GetConstructor(new Type[0]);
+-			if (constructor == null)
+-			{
+-				return false;
+-			}
+-			_xmlCustomAttributesInstances[attrType] = constructor.Invoke(new object[0]);
+-		}
+-		return pi.GetValue(_xmlCustomAttributesInstances[attrType], null)?.Equals(value) ?? (value == null);
+-	}
+-
+-	private void CreateProxyInterfaceMembers()
+-	{
+-		CodeMemberProperty codeMemberProperty = AddProperty(typeof(object), "UnderlyingObject");
+-		codeMemberProperty.GetStatements.Add(new CodeMethodReturnStatement(GetThisField("_underlyingInstance")));
+-		codeMemberProperty.SetStatements.Add(new CodeAssignStatement(GetThisField("_underlyingInstance"), new CodeCastExpression(new CodeTypeReference(_proxyData.ProxiedType), new CodePropertySetValueReferenceExpression())));
+-		codeMemberProperty.CustomAttributes.Add(new CodeAttributeDeclaration(new CodeTypeReference(typeof(XmlIgnoreAttribute))));
+-		CodeMemberMethod codeMemberMethod = AddMethod(typeof(ISerializationProxy), "CreateInstance");
+-		codeMemberMethod.Parameters.Add(new CodeParameterDeclarationExpression(typeof(object), "o"));
+-		codeMemberMethod.Statements.Add(new CodeMethodReturnStatement(new CodeObjectCreateExpression(new CodeTypeReference(_cl.Name), GetVar("o"))));
+-		codeMemberMethod = AddMethod(typeof(void), "Copy");
+-		codeMemberMethod.Parameters.Add(new CodeParameterDeclarationExpression(typeof(object), "source"));
+-		codeMemberMethod.Parameters.Add(new CodeParameterDeclarationExpression(typeof(object), "dest"));
+-		codeMemberMethod.Statements.Add(new CodeVariableDeclarationStatement(_proxyData.ProxiedType, "s", new CodeCastExpression(_proxyData.ProxiedType, GetVar("source"))));
+-		codeMemberMethod.Statements.Add(new CodeVariableDeclarationStatement(_proxyData.ProxiedType, "d", new CodeCastExpression(_proxyData.ProxiedType, GetVar("dest"))));
+-		foreach (MemberData member in _memberList)
+-		{
+-			if (member.IsField)
+-			{
+-				codeMemberMethod.Statements.Add(new CodeAssignStatement(GetFieldRef("d", member.Name), GetFieldRef("s", member.Name)));
+-			}
+-			else
+-			{
+-				codeMemberMethod.Statements.Add(new CodeAssignStatement(GetPropRef("d", member.Name), GetPropRef("s", member.Name)));
+-			}
+-		}
+-	}
+-
+-	private void CreateConstructorAndFields()
+-	{
+-		AddField(_cl, _proxyData.ProxiedType, "_underlyingInstance");
+-		CodeMemberField codeMemberField = AddField(_cl, typeof(XmlProxyData), "_proxyData");
+-		codeMemberField.Attributes |= MemberAttributes.Static;
+-		codeMemberField.InitExpression = GetStaticMethodInvoke(GetSelfType(), "GetXmlProxyData", new CodeTypeOfExpression(new CodeTypeReference(_proxyData.ProxiedType)));
+-		CodeConstructor codeConstructor = new CodeConstructor();
+-		codeConstructor.Attributes = MemberAttributes.Public;
+-		codeConstructor.Statements.Add(new CodeAssignStatement(GetThisField("_underlyingInstance"), new CodeObjectCreateExpression(new CodeTypeReference(_proxyData.ProxiedType))));
+-		_cl.Members.Add(codeConstructor);
+-		codeConstructor = new CodeConstructor();
+-		codeConstructor.Attributes = MemberAttributes.Public;
+-		codeConstructor.Parameters.Add(new CodeParameterDeclarationExpression(typeof(object), "_underlyingInstance"));
+-		codeConstructor.Statements.Add(new CodeAssignStatement(GetThisField("_underlyingInstance"), new CodeCastExpression(_proxyData.ProxiedType, GetVar("_underlyingInstance"))));
+-		_cl.Members.Add(codeConstructor);
+-	}
+-
+-	private CodeVariableReferenceExpression GetVar(string varName)
+-	{
+-		return new CodeVariableReferenceExpression(varName);
+-	}
+-
+-	private CodeTypeReference GetSelfType()
+-	{
+-		return new CodeTypeReference(typeof(CustomXmlSerializer));
+-	}
+-
+-	private CodeExpression GetThis()
+-	{
+-		return new CodeThisReferenceExpression();
+-	}
+-
+-	private CodeExpression GetThisField(string fieldName)
+-	{
+-		return new CodeFieldReferenceExpression(GetThis(), fieldName);
+-	}
+-
+-	private CodeMemberField AddField(CodeTypeDeclaration cl, Type type, string name)
+-	{
+-		CodeMemberField codeMemberField = new CodeMemberField(type, name);
+-		codeMemberField.Attributes = MemberAttributes.Private;
+-		cl.Members.Add(codeMemberField);
+-		return codeMemberField;
+-	}
+-
+-	private CodeMethodInvokeExpression GetMethodInvoke(string varName, string methodName, params CodeExpression[] parameters)
+-	{
+-		return new CodeMethodInvokeExpression(new CodeMethodReferenceExpression(new CodeVariableReferenceExpression(varName), methodName), parameters);
+-	}
+-
+-	private CodeMethodInvokeExpression GetStaticMethodInvoke(CodeTypeReference type, string methodName, params CodeExpression[] parameters)
+-	{
+-		return new CodeMethodInvokeExpression(new CodeMethodReferenceExpression(new CodeTypeReferenceExpression(type), methodName), parameters);
+-	}
+-
+-	private CodeMemberProperty AddProperty(Type type, string name)
+-	{
+-		CodeMemberProperty codeMemberProperty = new CodeMemberProperty();
+-		codeMemberProperty.Name = name;
+-		codeMemberProperty.Type = new CodeTypeReference(type);
+-		codeMemberProperty.Attributes = (MemberAttributes)24578;
+-		_cl.Members.Add(codeMemberProperty);
+-		return codeMemberProperty;
+-	}
+-
+-	private CodeMemberMethod AddMethod(Type returnType, string name)
+-	{
+-		CodeMemberMethod codeMemberMethod = new CodeMemberMethod
+-		{
+-			Name = name,
+-			ReturnType = new CodeTypeReference(returnType),
+-			Attributes = (MemberAttributes)24578
+-		};
+-		_cl.Members.Add(codeMemberMethod);
+-		return codeMemberMethod;
+-	}
+-
+-	private CodeFieldReferenceExpression GetFieldRef(string varName, string fieldName)
+-	{
+-		return new CodeFieldReferenceExpression(GetVar(varName), fieldName);
+-	}
+-
+-	private CodePropertyReferenceExpression GetPropRef(string varName, string propName)
+-	{
+-		return new CodePropertyReferenceExpression(GetVar(varName), propName);
+-	}
+-
+-	private CodeExpression GetFieldOrPropRef(string varName, string name, bool isField)
+-	{
+-		if (isField)
+-		{
+-			return GetFieldRef(varName, name);
+-		}
+-		return GetPropRef(varName, name);
+-	}
+-
+-	private void SaveFile(string filePath)
+-	{
+-		using FileStream stream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+-		using StreamWriter streamWriter = new StreamWriter(stream);
+-		string value = GenerateCode(_unit);
+-		streamWriter.Write(value);
+-		streamWriter.Flush();
+-	}
+-
+-	private string GenerateCode(CodeCompileUnit unit)
+-	{
+-		CSharpCodeProvider cSharpCodeProvider = new CSharpCodeProvider();
+-		StringBuilder stringBuilder = new StringBuilder();
+-		using (StringWriter writer = new StringWriter(stringBuilder))
+-		{
+-			using IndentedTextWriter writer2 = new IndentedTextWriter(writer);
+-			CodeGeneratorOptions codeGeneratorOptions = new CodeGeneratorOptions();
+-			codeGeneratorOptions.BlankLinesBetweenMembers = true;
+-			codeGeneratorOptions.ElseOnClosing = false;
+-			codeGeneratorOptions.VerbatimOrder = false;
+-			cSharpCodeProvider.GenerateCodeFromCompileUnit(unit, writer2, codeGeneratorOptions);
+-		}
+-		return stringBuilder.ToString();
+-	}
+ }
+--- a/UWGame/SimSide/DateAndTime.cs
++++ b/UWGame/SimSide/DateAndTime.cs
+@@ -316,2 +316,9 @@
+ 		SunIsUp = SunElevation > 0f && SunElevation < (float)Math.PI;
++		// UNHIDDEN MOD: the "O" shadow toggle. Forcing the sun down is what suppresses shadows,
++		// and it is applied before the change is compared below so the tree night states stay
++		// consistent with it.
++		if (UWGame.Mods.UnhiddenMod.Enabled && UWGame.Mods.UnhiddenMod.ShadowsDisabled)
++		{
++			SunIsUp = false;
++		}
+ 		if (SunIsUp != sunIsUp)
+--- a/UWGame/SimSide/GameData.cs
++++ b/UWGame/SimSide/GameData.cs
+@@ -288,2 +288,5 @@
+ 
++	// PORT DEVIATION 16 (see PORTING-NOTES.md). Was LightSourceSpriteSheet, following the game
++	// itself: 1.0.4.8 deleted that class and loads LightSources as a plain SpriteSheet. Typed as
++	// the base class so BOTH versions' asset loads here - see the load site.
+ 	public SpriteSheet LightSourcesSpriteSheet;
+@@ -1053,2 +1056,8 @@
+ 		case 30:
++			// PORT DEVIATION 16. Loaded as the base SpriteSheet, which is what 1.0.4.8's own code
++			// does. Asking for LightSourceSpriteSheet threw on 1.0.4.8 content with
++			// "Unable to cast object of type 'SpriteSheet' to type 'LightSourceSpriteSheet'",
++			// because the XNB now names the base type. Requesting the base accepts either the
++			// new asset or an older one - a derived instance assigns to a base field - so this
++			// one line is what makes the port version-tolerant here.
+ 			Instance.LightSourcesSpriteSheet = game.Content.Load<SpriteSheet>("LightSources");
+--- a/UWGame/SimSide/Snapshots/Snapshotter.cs
++++ b/UWGame/SimSide/Snapshots/Snapshotter.cs
+@@ -714,3 +714,8 @@
+ 			{
+-				CRC.AddData(BitConverter.GetBytes(val.Value));
++				// PORT DEVIATION 3 (see PORTING-NOTES.md). val is byte?, and BitConverter has no
++				// GetBytes(byte) overload. On .NET Framework the compiler picked GetBytes(short);
++				// .NET 8 added GetBytes(Half), which makes byte->short vs byte->Half ambiguous.
++				// The original IL is `Nullable<uint8>::get_Value()` then `GetBytes(int16)`, i.e.
++				// 2 CRC bytes - so the cast MUST be to short or save/replay CRCs would diverge.
++				CRC.AddData(BitConverter.GetBytes((short)val.Value));
+ 			}
+--- a/UWGame/Steam/SteamManager.cs
++++ b/UWGame/Steam/SteamManager.cs
+@@ -24,2 +24,29 @@
+ 	{
++		// PORT DEVIATION 4 (see PORTING-NOTES.md).
++		// Controller.Initialize calls this unconditionally and unguarded. The original was safe
++		// because Steamworks.NET 7.0.0.0 and the shipped CSteamworks/steam_api64.dll were built
++		// together. We now use current Steamworks.NET, which P/Invokes flat-API exports that
++		// only exist in newer steam_api64.dll builds - so a native/managed version mismatch
++		// surfaces as EntryPointNotFoundException rather than as SteamAPI.Init() returning
++		// false, and would take out game startup.
++		//
++		// The game already degrades correctly when Steam is unavailable ("Achievements will not
++		// be available"), so funnel native failures into that same path instead. This also
++		// makes the game runnable with no Steam client at all, which the port needs for testing.
++		try
++		{
++			return InitializeCore();
++		}
++		catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
++		{
++			isInitialized = false;
++			Console.WriteLine("[Steamworks.NET] Steam native library unavailable or incompatible: " + ex.Message);
++			UnclaimedWorld.LogError("Achievements will not be available.",
++				"[Steamworks.NET] Steam native library unavailable or incompatible.");
++			return false;
++		}
++	}
++
++	private bool InitializeCore()
++	{
+ 		if (s_EverInialized)

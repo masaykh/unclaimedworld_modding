@@ -1,0 +1,342 @@
+--- a/CustomXmlSerializer.cs
++++ b/ProxyCodeGenerator.cs
+@@ -8,50 +8,31 @@
+ using System.Text;
+-using System.Xml;
+ using System.Xml.Serialization;
+ using Microsoft.CSharp;
++using UWGame.SimSide;
+ 
+-namespace UWGame.SimSide;
+-
+-public class CustomXmlSerializer
++// Brings CustomXmlSerializer's nested types - XmlProxyData, XmlTypeMapping<,>,
++// XmlTypeMappingBase, ISerializationProxy - and GeneratedProxyNamespace into scope unqualified,
++// so the code below is the game's original generator verbatim rather than a reworded copy.
++using static UWGame.SimSide.CustomXmlSerializer;
++
++namespace UW.Tools.XmlProxyGen;
++
++/// <summary>
++/// The CodeDom half of the game's CustomXmlSerializer, moved out of the game (PORT DEVIATION 12).
++///
++/// This is the retail code that built an XML serialization proxy per data type, unchanged apart
++/// from being lifted into its own class. It ran at runtime in the retail build; on .NET 8 it runs
++/// here, at build time, and the game compiles the result as ordinary source.
++///
++/// Moving it rather than copying it is what lets the game drop its System.CodeDom reference.
++/// That matters for the DesktopGL target specifically: it builds as net8.0, where System.CodeDom
++/// is a NuGet package, whereas the WindowsDX target's net8.0-windows gets it free from the
++/// Microsoft.WindowsDesktop.App shared framework. So the move is the difference between the
++/// portable build carrying a package it only needs for code it can never execute, and not.
++///
++/// The proof that the move changed nothing is that regenerating still produces byte-identical
++/// proxies - build/20-generate-xml-proxies.sh --check.
++/// </summary>
++internal sealed class ProxyCodeGenerator
+ {
+-	public interface ISerializationProxy
+-	{
+-		object UnderlyingObject { get; set; }
+-
+-		void Copy(object source, object dest);
+-
+-		ISerializationProxy CreateInstance(object o);
+-	}
+-
+-	public abstract class XmlTypeMappingBase
+-	{
+-		public abstract Type ProxiedType { get; }
+-
+-		public abstract Type ProxyType { get; }
+-	}
+-
+-	public class XmlTypeMapping<TProxied, TProxy> : XmlTypeMappingBase
+-	{
+-		public override Type ProxiedType => typeof(TProxied);
+-
+-		public override Type ProxyType => typeof(TProxy);
+-
+-		public Func<TProxy, TProxied> SetterMethod { get; set; }
+-
+-		public Func<TProxied, TProxy> GetterMethod { get; set; }
+-	}
+-
+-	public class XmlProxyData
+-	{
+-		public Type ProxiedType { get; set; }
+-
+-		public List<XmlTypeMappingBase> TypeMappings { get; set; }
+-
+-		public XmlProxyData(Type proxiedType)
+-		{
+-			ProxiedType = proxiedType;
+-			TypeMappings = new List<XmlTypeMappingBase>();
+-		}
+-	}
+-
+ 	private class TypeData
+@@ -74,12 +55,3 @@
+ 
+-	private class ProxyAssemblyData
+-	{
+-		public XmlProxyData XmlProxyData { get; set; }
+-
+-		public Type ProxyType { get; set; }
+-
+-		public Assembly ProxyAssembly { get; set; }
+-
+-		public ISerializationProxy ProxyInstance { get; set; }
+-	}
++	private static readonly Dictionary<Type, object> _xmlCustomAttributesInstances = new Dictionary<Type, object>();
+ 
+@@ -100,7 +72,2 @@
+ 	private List<MemberData> _memberList;
+-
+-	private static Dictionary<Type, ProxyAssemblyData> _proxyAssemblyDataMap = new Dictionary<Type, ProxyAssemblyData>();
+-
+-	private static Dictionary<Type, object> _xmlCustomAttributesInstances = new Dictionary<Type, object>();
+-
+ 	public CodeCompileUnit GenerateXmlProxy(XmlProxyData proxyData)
+@@ -109,3 +76,3 @@
+ 		_unit = new CodeCompileUnit();
+-		_ns = new CodeNamespace("dummy.d" + Guid.NewGuid().ToString().Replace("-", ""));
++		_ns = new CodeNamespace(GeneratedProxyNamespace);
+ 		_unit.Namespaces.Add(_ns);
+@@ -120,31 +87,2 @@
+ 
+-	public Assembly CompileAssembly(XmlProxyData proxyData)
+-	{
+-		string proxyTypeName;
+-		return CompileAssembly(proxyData, out proxyTypeName);
+-	}
+-
+-	public Assembly CompileAssembly(XmlProxyData proxyData, out string proxyTypeName)
+-	{
+-		CodeCompileUnit codeCompileUnit = GenerateXmlProxy(proxyData);
+-		proxyTypeName = _ns.Name + "." + _cl.Name;
+-		CodeDomProvider codeDomProvider = CodeDomProvider.CreateProvider("c#");
+-		CompilerParameters compilerParameters = new CompilerParameters();
+-		compilerParameters.GenerateInMemory = true;
+-		Assembly entryAssembly = Assembly.GetEntryAssembly();
+-		compilerParameters.ReferencedAssemblies.Add(entryAssembly.Location);
+-		AssemblyName[] referencedAssemblies = entryAssembly.GetReferencedAssemblies();
+-		foreach (AssemblyName assemblyRef in referencedAssemblies)
+-		{
+-			compilerParameters.ReferencedAssemblies.Add(Assembly.Load(assemblyRef).Location);
+-		}
+-		compilerParameters.GenerateExecutable = false;
+-		CompilerResults compilerResults = codeDomProvider.CompileAssemblyFromDom(compilerParameters, codeCompileUnit);
+-		if (compilerResults.Errors.Count > 0)
+-		{
+-			throw new ApplicationException("Compilation erros: " + compilerResults.Errors[0].ErrorText);
+-		}
+-		return compilerResults.CompiledAssembly;
+-	}
+-
+ 	public string GetProxyCode(XmlProxyData proxyData)
+@@ -160,186 +98,2 @@
+ 
+-	public static XmlProxyData GetXmlProxyData(Type proxiedType)
+-	{
+-		if (_proxyAssemblyDataMap.ContainsKey(proxiedType))
+-		{
+-			return _proxyAssemblyDataMap[proxiedType].XmlProxyData;
+-		}
+-		return null;
+-	}
+-
+-	public static void WriteXmlSerialize(object o, XmlWriter writer, XmlProxyData proxyData)
+-	{
+-		if (o == null || writer == null || proxyData == null)
+-		{
+-			throw new NullReferenceException();
+-		}
+-		Type proxiedType = proxyData.ProxiedType;
+-		if (!_proxyAssemblyDataMap.ContainsKey(proxiedType))
+-		{
+-			GenerateProxyAssembly(proxyData);
+-		}
+-		ProxyAssemblyData proxyAssemblyData = _proxyAssemblyDataMap[proxiedType];
+-		XmlSerializer xmlSerializer = new XmlSerializer(proxyAssemblyData.ProxyType);
+-		XmlSerializerNamespaces xmlSerializerNamespaces = new XmlSerializerNamespaces();
+-		xmlSerializerNamespaces.Add("", "");
+-		object o2 = proxyAssemblyData.ProxyInstance.CreateInstance(o);
+-		StringBuilder stringBuilder = new StringBuilder();
+-		using (StringWriter w = new StringWriter(stringBuilder))
+-		{
+-			using XmlTextWriter xmlWriter = new XmlTextWriter(w);
+-			xmlSerializer.Serialize(xmlWriter, o2, xmlSerializerNamespaces);
+-		}
+-		using StringReader input = new StringReader(stringBuilder.ToString());
+-		using XmlTextReader xmlTextReader = new XmlTextReader(input);
+-		while (xmlTextReader.Read() && xmlTextReader.NodeType != XmlNodeType.Element)
+-		{
+-		}
+-		WriteDeepNode(xmlTextReader, writer, skipStartElement: true);
+-	}
+-
+-	public static void ReadXmlDeserialize(object o, XmlReader reader, XmlProxyData proxyData)
+-	{
+-		if (o == null || reader == null || proxyData == null)
+-		{
+-			throw new NullReferenceException();
+-		}
+-		Type proxiedType = proxyData.ProxiedType;
+-		if (!_proxyAssemblyDataMap.ContainsKey(proxiedType))
+-		{
+-			GenerateProxyAssembly(proxyData);
+-		}
+-		ProxyAssemblyData proxyAssemblyData = _proxyAssemblyDataMap[proxiedType];
+-		if (reader.LocalName == proxyAssemblyData.ProxyType.Name)
+-		{
+-			ISerializationProxy obj = (ISerializationProxy)new XmlSerializer(proxyAssemblyData.ProxyType).Deserialize(reader);
+-			obj.Copy(obj.UnderlyingObject, o);
+-			return;
+-		}
+-		StringBuilder stringBuilder = new StringBuilder();
+-		using (StringWriter w = new StringWriter(stringBuilder))
+-		{
+-			using XmlTextWriter xmlTextWriter = new XmlTextWriter(w);
+-			xmlTextWriter.WriteStartElement(proxyAssemblyData.ProxyType.Name);
+-			bool num = reader.NodeType == XmlNodeType.Element && !reader.IsEmptyElement;
+-			WriteDeepNode(reader, xmlTextWriter, skipStartElement: true);
+-			if (num)
+-			{
+-				xmlTextWriter.WriteFullEndElement();
+-			}
+-			else
+-			{
+-				xmlTextWriter.WriteEndElement();
+-			}
+-			reader.Read();
+-		}
+-		using StringReader input = new StringReader(stringBuilder.ToString());
+-		using XmlTextReader xmlReader = new XmlTextReader(input);
+-		ISerializationProxy obj2 = (ISerializationProxy)new XmlSerializer(proxyAssemblyData.ProxyType).Deserialize(xmlReader);
+-		obj2.Copy(obj2.UnderlyingObject, o);
+-	}
+-
+-	private static void GenerateProxyAssembly(XmlProxyData proxyData)
+-	{
+-		ProxyAssemblyData proxyAssemblyData = new ProxyAssemblyData
+-		{
+-			XmlProxyData = proxyData
+-		};
+-		_proxyAssemblyDataMap[proxyData.ProxiedType] = proxyAssemblyData;
+-		string proxyTypeName;
+-		Assembly assembly = (proxyAssemblyData.ProxyAssembly = new CustomXmlSerializer().CompileAssembly(proxyData, out proxyTypeName));
+-		proxyAssemblyData.ProxyType = assembly.GetType(proxyTypeName);
+-		ConstructorInfo constructor = proxyAssemblyData.ProxyType.GetConstructor(new Type[0]);
+-		proxyAssemblyData.ProxyInstance = (ISerializationProxy)constructor.Invoke(new object[0]);
+-	}
+-
+-	private static void WriteDeepNode(XmlReader reader, XmlWriter writer, bool skipStartElement)
+-	{
+-		int num = 1;
+-		string localName = reader.LocalName;
+-		WriteShallowNode(reader, writer, skipStartElement);
+-		if (reader.NodeType != XmlNodeType.Element || reader.IsEmptyElement)
+-		{
+-			return;
+-		}
+-		bool flag = false;
+-		while (reader.Read())
+-		{
+-			if (reader.LocalName == localName)
+-			{
+-				if (reader.NodeType == XmlNodeType.Element && !reader.IsEmptyElement)
+-				{
+-					num++;
+-				}
+-				else if (reader.NodeType == XmlNodeType.EndElement)
+-				{
+-					num--;
+-					if (num == 0)
+-					{
+-						if (skipStartElement)
+-						{
+-							break;
+-						}
+-						flag = true;
+-					}
+-				}
+-			}
+-			WriteShallowNode(reader, writer, skipStartElement: false);
+-			if (flag)
+-			{
+-				break;
+-			}
+-		}
+-	}
+-
+-	private static void WriteShallowNode(XmlReader reader, XmlWriter writer, bool skipStartElement)
+-	{
+-		switch (reader.NodeType)
+-		{
+-		case XmlNodeType.Element:
+-			if (!skipStartElement)
+-			{
+-				writer.WriteStartElement(reader.Prefix, reader.LocalName, reader.NamespaceURI);
+-			}
+-			writer.WriteAttributes(reader, defattr: true);
+-			if (!skipStartElement && reader.IsEmptyElement)
+-			{
+-				writer.WriteEndElement();
+-			}
+-			break;
+-		case XmlNodeType.Text:
+-			writer.WriteString(reader.Value);
+-			break;
+-		case XmlNodeType.Whitespace:
+-		case XmlNodeType.SignificantWhitespace:
+-			writer.WriteWhitespace(reader.Value);
+-			break;
+-		case XmlNodeType.CDATA:
+-			writer.WriteCData(reader.Value);
+-			break;
+-		case XmlNodeType.EntityReference:
+-			writer.WriteEntityRef(reader.Name);
+-			break;
+-		case XmlNodeType.ProcessingInstruction:
+-		case XmlNodeType.XmlDeclaration:
+-			writer.WriteProcessingInstruction(reader.Name, reader.Value);
+-			break;
+-		case XmlNodeType.DocumentType:
+-			writer.WriteDocType(reader.Name, reader.GetAttribute("PUBLIC"), reader.GetAttribute("SYSTEM"), reader.Value);
+-			break;
+-		case XmlNodeType.Comment:
+-			writer.WriteComment(reader.Value);
+-			break;
+-		case XmlNodeType.EndElement:
+-			writer.WriteFullEndElement();
+-			break;
+-		case XmlNodeType.Attribute:
+-		case XmlNodeType.Entity:
+-		case XmlNodeType.Document:
+-		case XmlNodeType.DocumentFragment:
+-		case XmlNodeType.Notation:
+-		case XmlNodeType.EndEntity:
+-			break;
+-		}
+-	}
+-
+ 	private void GenerateMembers()
+@@ -548,10 +302,9 @@
+ 	{
+-		CodeMemberMethod codeMemberMethod = new CodeMemberMethod
+-		{
+-			Name = name,
+-			ReturnType = new CodeTypeReference(returnType),
+-			Attributes = (MemberAttributes)24578
+-		};
+-		_cl.Members.Add(codeMemberMethod);
+-		return codeMemberMethod;
++		CodeMemberMethod codeMemberMethod = new CodeMemberMethod();
++		codeMemberMethod.Name = name;
++		codeMemberMethod.ReturnType = new CodeTypeReference(returnType);
++		codeMemberMethod.Attributes = (MemberAttributes)24578;
++		CodeMemberMethod codeMemberMethod2 = codeMemberMethod;
++		_cl.Members.Add(codeMemberMethod2);
++		return codeMemberMethod2;
+ 	}

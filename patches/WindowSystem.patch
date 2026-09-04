@@ -1,0 +1,20 @@
+--- a/Properties/AssemblyInfo.cs
++++ b/Properties/AssemblyInfo.cs
+@@ -6,12 +6,12 @@
+ 
++[assembly: AssemblyFileVersion("1.0.0.0")]
++[assembly: AssemblyConfiguration("")]
+ [assembly: AssemblyTitle("WindowSystem")]
+ [assembly: AssemblyProduct("WindowSystem")]
+-[assembly: AssemblyConfiguration("")]
+-[assembly: AssemblyDescription("")]
+-[assembly: AssemblyCompany("")]
+ [assembly: AssemblyCopyright("Copyright ©  2016")]
++[assembly: Guid("cb8ead86-fb12-4d1f-aaae-794d56674caf")]
++[assembly: AssemblyCompany("")]
++[assembly: AssemblyDescription("")]
+ [assembly: AssemblyTrademark("")]
+ [assembly: ComVisible(false)]
+-[assembly: Guid("cb8ead86-fb12-4d1f-aaae-794d56674caf")]
+-[assembly: AssemblyFileVersion("1.0.0.0")]
+ [assembly: AssemblyVersion("1.0.0.0")]

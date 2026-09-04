@@ -1,0 +1,393 @@
+--- a/RoundLineCode/RoundLine.cs
++++ b/RoundLineCode/RoundLine.cs
+@@ -67,382 +67,10 @@
+ 
+-	public float DistanceSquaredPointToVirtualLine(Vector2 p, out Vector2 closestP)
+-	{
+-		Vector2 vector = P1 - P0;
+-		float num = Vector2.Dot(p - P0, vector);
+-		if (num <= 0f)
+-		{
+-			closestP = P0;
+-			return Vector2.DistanceSquared(p, P0);
+-		}
+-		float num2 = Vector2.Dot(vector, vector);
+-		if (num2 <= num)
+-		{
+-			closestP = P1;
+-			return Vector2.DistanceSquared(p, P1);
+-		}
+-		float num3 = num / num2;
+-		return Vector2.DistanceSquared(p, closestP = P0 + num3 * vector);
+-	}
+-
+-	public float DistanceSquaredPointToVirtualLine(Vector2 p)
+-	{
+-		Vector2 closestP;
+-		return DistanceSquaredPointToVirtualLine(p, out closestP);
+-	}
+-
+-	private static void FindRadialT(Vector2 p0, Vector2 p1, Vector2 p2, float dist, out float t1, out float t2)
+-	{
+-		p0 -= p2;
+-		p1 -= p2;
+-		float x = p0.X;
+-		float num = p1.X - p0.X;
+-		float y = p0.Y;
+-		float num2 = p1.Y - p0.Y;
+-		float num3 = num * num + num2 * num2;
+-		float num4 = 2f * x * num + 2f * y * num2;
+-		float num5 = x * x + y * y - dist * dist;
+-		float num6 = num4 * num4 - 4f * num3 * num5;
+-		if (num6 < 0f)
+-		{
+-			t1 = float.MaxValue;
+-			t2 = float.MaxValue;
+-			return;
+-		}
+-		float num7 = (float)Math.Sqrt(num6);
+-		t1 = (0f - num4 + num7) / (2f * num3);
+-		t2 = (0f - num4 - num7) / (2f * num3);
+-		if (t2 < t1)
+-		{
+-			float num8 = t1;
+-			t1 = t2;
+-			t2 = num8;
+-		}
+-		if (t1 <= 0f && t2 >= 0f)
+-		{
+-			float num9 = Math.Abs(t1);
+-			float num10 = Math.Abs(t2);
+-			if ((double)t2 < 0.1)
+-			{
+-				t1 = float.MaxValue;
+-				t2 = float.MaxValue;
+-			}
+-			else if (num9 < num10)
+-			{
+-				t1 = 0f;
+-			}
+-			else
+-			{
+-				t2 = t1;
+-			}
+-		}
+-		else if ((double)Math.Abs(t1 - t2) < 0.01)
+-		{
+-			t1 = float.MaxValue;
+-			t2 = float.MaxValue;
+-		}
+-	}
+-
+-	private static Vector2 Rotate(Vector2 vec, float theta)
+-	{
+-		Vector4 value = new Vector4(vec.X, vec.Y, 0f, 1f);
+-		Matrix matrix = Matrix.CreateRotationZ(theta);
+-		Vector4 vector = Vector4.Transform(value, matrix);
+-		return new Vector2(vector.X, vector.Y);
+-	}
+-
+-	private void FindLinearT(Vector2 p0, Vector2 p1, float dist, out float t1, out float t2)
+-	{
+-		p0 -= P0;
+-		p1 -= P0;
+-		p0 = Rotate(p0, 0f - Theta);
+-		p1 = Rotate(p1, 0f - Theta);
+-		p0.X *= 1f / Rho;
+-		p1.X *= 1f / Rho;
+-		float y = p0.Y;
+-		float num = p1.Y - p0.Y;
+-		t1 = (dist - y) / num;
+-		t2 = (0f - dist - y) / num;
+-		if ((double)Math.Abs(t1) < 0.0001)
+-		{
+-			if ((double)num > -1E-05)
+-			{
+-				t1 = float.MaxValue;
+-			}
+-			else if (t1 < 0f)
+-			{
+-				t1 = 0f;
+-			}
+-		}
+-		if ((double)Math.Abs(t2) < 0.0001)
+-		{
+-			if (num < 0f)
+-			{
+-				t2 = float.MaxValue;
+-			}
+-			else if (t2 < 0f)
+-			{
+-				t2 = 0f;
+-			}
+-		}
+-		if (t2 < t1)
+-		{
+-			float num2 = t2;
+-			t2 = t1;
+-			t1 = num2;
+-		}
+-		float x = p0.X;
+-		float num3 = p1.X - p0.X;
+-		float num4 = x + num3 * t1;
+-		if (num4 < 0f || num4 > 1f)
+-		{
+-			t1 = float.MaxValue;
+-		}
+-		float num5 = x + num3 * t2;
+-		if (num5 < 0f || num5 > 1f)
+-		{
+-			t2 = float.MaxValue;
+-		}
+-	}
+-
+-	public void FindFirstIntersection(Vector2 p0, Vector2 p1, float dist, out float tMin)
+-	{
+-		tMin = float.MaxValue;
+-		FindRadialT(p0, p1, P0, dist, out var t, out var t2);
+-		if (t < tMin && t >= 0f && t < 1f)
+-		{
+-			tMin = t;
+-		}
+-		FindRadialT(p0, p1, P1, dist, out t, out t2);
+-		if (t < tMin && t >= 0f && t < 1f)
+-		{
+-			tMin = t;
+-		}
+-		FindLinearT(p0, p1, dist, out t, out t2);
+-		if (t < tMin && t >= 0f && t < 1f)
+-		{
+-			tMin = t;
+-		}
+-	}
+-
+-	public void FindNearbyLines(List<RoundLine> lineList, List<RoundLine> nearbyLineList, float globalLineRadius, Vector2 referencePos, float referenceRadius)
+-	{
+-		nearbyLineList.Clear();
+-		foreach (RoundLine line in lineList)
+-		{
+-			float num = referenceRadius + globalLineRadius;
+-			if (line.DistanceSquaredPointToVirtualLine(referencePos) < num * num)
+-			{
+-				nearbyLineList.Add(line);
+-			}
+-		}
+-	}
+-
+-	public static void FindNearbyLinesWithClipping(List<RoundLine> lineList, List<RoundLine> nearbyLineList, float globalLineRadius, Vector2 referencePos, float referenceRadius)
+-	{
+-		nearbyLineList.Clear();
+-		Vector2 vector = referencePos;
+-		foreach (RoundLine line in lineList)
+-		{
+-			Vector2 value = line.P0;
+-			Vector2 value2 = line.P1;
+-			float num = (value2.X - value.X) * (value2.X - value.X) + (value2.Y - value.Y) * (value2.Y - value.Y);
+-			float num2 = 2f * ((value2.X - value.X) * (value.X - vector.X) + (value2.Y - value.Y) * (value.Y - vector.Y));
+-			float num3 = vector.X * vector.X + vector.Y * vector.Y + value.X * value.X + value.Y * value.Y - 2f * (vector.X * value.X + vector.Y * value.Y) - referenceRadius * referenceRadius;
+-			float num4 = num2 * num2 - 4f * num * num3;
+-			if (num4 <= 0f)
+-			{
+-				continue;
+-			}
+-			float num5 = (float)Math.Sqrt(num4);
+-			float num6 = (0f - num2 + num5) / (2f * num);
+-			float num7 = (0f - num2 - num5) / (2f * num);
+-			if ((num6 < 0f || num6 > 1f) && (num7 < 0f || num7 > 1f))
+-			{
+-				if ((!(num6 < 0f) || !(num7 < 0f)) && (!(num6 > 1f) || !(num7 > 1f)))
+-				{
+-					nearbyLineList.Add(line);
+-				}
+-				continue;
+-			}
+-			Vector2 vector2 = line.P0;
+-			Vector2 vector3 = line.P1;
+-			if (0f <= num7 && num7 <= 1f)
+-			{
+-				vector2 = Vector2.Lerp(value, value2, num7);
+-			}
+-			if (0f <= num6 && num6 <= 1f)
+-			{
+-				vector3 = Vector2.Lerp(value, value2, num6);
+-			}
+-			nearbyLineList.Add(new RoundLine(vector2, vector3));
+-		}
+-	}
+-
+-	public float MinDistanceSquaredDeviation(List<RoundLine> lineList, Vector2 currentPos, float lineRadius, float discRadius)
+-	{
+-		float num = float.MaxValue;
+-		foreach (RoundLine line in lineList)
+-		{
+-			float num2 = (lineRadius + discRadius) * (lineRadius + discRadius);
+-			float num3 = line.DistanceSquaredPointToVirtualLine(currentPos) - num2;
+-			if (num3 < num)
+-			{
+-				num = num3;
+-			}
+-		}
+-		return num;
+-	}
+-
+-	public void CollideAndSlide(List<RoundLine> lineList, Vector2 currentPos, Vector2 proposedPos, float lineRadius, float discRadius, out Vector2 finalPos)
+-	{
+-		Vector2 vector = currentPos;
+-		Vector2 vector2 = proposedPos;
+-		bool flag = false;
+-		while (Vector2.DistanceSquared(vector, vector2) > 1.0000001E-06f)
+-		{
+-			float num = 1f;
+-			RoundLine roundLine = null;
+-			foreach (RoundLine line in lineList)
+-			{
+-				float num2 = lineRadius + discRadius;
+-				float num3 = num2 * num2;
+-				line.DistanceSquaredPointToVirtualLine(vector);
+-				line.FindFirstIntersection(vector, vector2, num2, out var tMin);
+-				if (tMin >= 0f && tMin <= 1f)
+-				{
+-					Vector2 p = new Vector2(MathHelper.Lerp(vector.X, vector2.X, tMin), MathHelper.Lerp(vector.Y, vector2.Y, tMin));
+-					if (line.DistanceSquaredPointToVirtualLine(p) - num3 < 0f)
+-					{
+-						float num4 = 0f;
+-						float num5 = tMin;
+-						for (int i = 0; i < 10; i++)
+-						{
+-							float num6 = (num4 + num5) / 2f;
+-							Vector2 p2 = new Vector2(MathHelper.Lerp(vector.X, vector2.X, num6), MathHelper.Lerp(vector.Y, vector2.Y, num6));
+-							if (line.DistanceSquaredPointToVirtualLine(p2) - num3 < 0f)
+-							{
+-								num5 = num6;
+-							}
+-							else
+-							{
+-								num4 = num6;
+-							}
+-						}
+-						tMin = num4;
+-					}
+-					if (tMin < num)
+-					{
+-						num = tMin;
+-						roundLine = line;
+-					}
+-				}
+-				else
+-				{
+-					if (!(line.DistanceSquaredPointToVirtualLine(vector2) - num3 < 0f))
+-					{
+-						continue;
+-					}
+-					float num7 = 0f;
+-					float num8 = 1f;
+-					for (int j = 0; j < 10; j++)
+-					{
+-						float num9 = (num7 + num8) / 2f;
+-						Vector2 p3 = new Vector2(MathHelper.Lerp(vector.X, vector2.X, num9), MathHelper.Lerp(vector.Y, vector2.Y, num9));
+-						if (line.DistanceSquaredPointToVirtualLine(p3) - num3 < 0f)
+-						{
+-							num8 = num9;
+-						}
+-						else
+-						{
+-							num7 = num9;
+-						}
+-					}
+-					if (num7 < num)
+-					{
+-						num = num7;
+-						roundLine = line;
+-					}
+-				}
+-			}
+-			if (roundLine == null)
+-			{
+-				vector = vector2;
+-				continue;
+-			}
+-			Vector2 vector3 = new Vector2(MathHelper.Lerp(vector.X, vector2.X, num), MathHelper.Lerp(vector.Y, vector2.Y, num));
+-			float num10 = (lineRadius + discRadius) * (lineRadius + discRadius);
+-			if (MinDistanceSquaredDeviation(lineList, vector3, lineRadius, discRadius) < 0f)
+-			{
+-				float num11 = 0f;
+-				float num12 = num;
+-				for (int k = 0; k < 10; k++)
+-				{
+-					float num13 = (num11 + num12) / 2f;
+-					Vector2 currentPos2 = new Vector2(MathHelper.Lerp(vector.X, vector2.X, num13), MathHelper.Lerp(vector.Y, vector2.Y, num13));
+-					if (MinDistanceSquaredDeviation(lineList, currentPos2, lineRadius, discRadius) < 0f)
+-					{
+-						num12 = num13;
+-					}
+-					else
+-					{
+-						num11 = num13;
+-					}
+-				}
+-				num = num11;
+-				vector3 = new Vector2(MathHelper.Lerp(vector.X, vector2.X, num), MathHelper.Lerp(vector.Y, vector2.Y, num));
+-			}
+-			bool flag2 = true;
+-			Vector2 vector4;
+-			if (flag)
+-			{
+-				vector4 = vector3;
+-				flag2 = false;
+-			}
+-			else
+-			{
+-				flag = true;
+-			}
+-			if (flag2)
+-			{
+-				roundLine.DistanceSquaredPointToVirtualLine(vector3, out var closestP);
+-				RoundLine roundLine2 = new RoundLine(vector3, closestP);
+-				Vector2 vector5 = vector3 - closestP;
+-				vector5.Normalize();
+-				float num14 = roundLine2.Theta;
+-				num14 += (float)Math.PI / 2f;
+-				Vector2 vector6 = new Vector2(vector3.X + (float)Math.Cos(num14), vector3.Y + (float)Math.Sin(num14));
+-				Vector2 value = vector2 - vector3;
+-				Vector2 vector7 = vector6 - vector3;
+-				float num15 = Vector2.Dot(value, vector7);
+-				vector4 = vector3 + num15 * vector7;
+-				float num16 = roundLine.DistanceSquaredPointToVirtualLine(vector4);
+-				if (num16 - num10 < 0f)
+-				{
+-					float num17 = 0f;
+-					float num18 = 0f - (num16 - num10) + 0.0001f;
+-					for (int l = 0; l < 10; l++)
+-					{
+-						float num19 = (num17 + num18) / 2f;
+-						Vector2 p4 = vector4 + num19 * vector5;
+-						if (roundLine.DistanceSquaredPointToVirtualLine(p4) - num10 >= 0f)
+-						{
+-							num18 = num19;
+-						}
+-						else
+-						{
+-							num17 = num19;
+-						}
+-					}
+-					vector4 += num18 * vector5;
+-				}
+-			}
+-			else
+-			{
+-				vector4 = vector3;
+-			}
+-			vector = vector3;
+-			vector2 = vector4;
+-		}
+-		finalPos = vector;
+-	}
++	// NOTE: the studio extended this class with a collision/query half - CollideAndSlide,
++	// MinDistanceSquaredDeviation, FindFirstIntersection, FindNearbyLines,
++	// FindNearbyLinesWithClipping, DistanceSquaredPointToVirtualLine and the private
++	// FindRadialT / FindLinearT / Rotate helpers (385 lines). It was character-movement
++	// collision against walls, but it was never wired up: zero call sites in the game or in
++	// WindowSystem, and the shipped game does its collision elsewhere. Removed so that this
++	// rendering type stops implying a movement system the game does not have.
++	// It remains in git history and in decomp/RoundLines/ if it is ever wanted.
+ }

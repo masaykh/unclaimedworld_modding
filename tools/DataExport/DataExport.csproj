@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Runs the game's own data export headlessly.
+
+    DataLoader.QueueInitGameData() is a state machine that walks ~80 hard-coded tables and,
+    when Sim.CurrentSerializeMode is WriteAndRead, writes each one to data/BaseData/*.xml and
+    reads it straight back. The game only ever drives it from a load screen, so exporting
+    normally means starting a game. This does it without a window, which makes the export
+    checkable in the build instead of by hand.
+
+    It is also the only test that puts REAL data through all 27 generated XML serialization
+    proxies (PORT DEVIATION 12). Compiling them proves nothing about whether XmlSerializer can
+    drive them; a write-then-read of the actual game tables does.
+
+    References the built UnclaimedWorld.dll rather than the project, for the same reason
+    XmlProxyGen does: build order, not preference.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>dataexport</AssemblyName>
+    <RootNamespace>UW.Tools.DataExport</RootNamespace>
+    <NoWarn>WFAC010</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <UwGameBin Condition="'$(UwGameBin)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\bin\UnclaimedWorld\release_dx</UwGameBin>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="UnclaimedWorld">
+      <HintPath>$(UwGameBin)\UnclaimedWorld.dll</HintPath>
+    </Reference>
+    <Reference Include="MonoGame.Framework">
+      <HintPath>$(UwGameBin)\MonoGame.Framework.dll</HintPath>
+    </Reference>
+    <Reference Include="SpriteSheetRuntime">
+      <HintPath>$(UwGameBin)\SpriteSheetRuntime.dll</HintPath>
+    </Reference>
+    <Reference Include="WindowSystem">
+      <HintPath>$(UwGameBin)\WindowSystem.dll</HintPath>
+    </Reference>
+    <Reference Include="Xclna.Xna.Animationx86">
+      <HintPath>$(UwGameBin)\Xclna.Xna.Animationx86.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,6 @@
+Xclna/Xna/Animation/BasicPaletteEffect.cs
+Xclna/Xna/Animation/Content/PaletteEffectReader.cs
+Xclna/Xna/Animation/DefaultModelViewerCamera.cs
+Xclna/Xna/Animation/EffectInstancedAnimator.cs
+Xclna/Xna/Animation/IModelViewerCamera.cs
+Xclna/Xna/Animation/ModelViewer.cs

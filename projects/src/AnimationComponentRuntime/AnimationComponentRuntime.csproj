@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- David Astle's XNA Animation Component Library (MS-PL), studio-forked.
+       NOTE: "x86" in the assembly name is upstream naming only - the assembly is pure
+       ILONLY AnyCPU with no native code. The name and version 1.0.2.0 are LOAD-CRITICAL:
+       all 47 model XNBs name "Xclna.Xna.Animation.Content.AnimationReader,
+       Xclna.Xna.Animationx86, Version=1.0.2.0". -->
+  <PropertyGroup>
+    <AssemblyName>Xclna.Xna.Animationx86</AssemblyName>
+    <RootNamespace>Xclna.Xna.Animation</RootNamespace>
+  </PropertyGroup>
+</Project>

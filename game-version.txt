@@ -1,0 +1,3 @@
+# Game version this kit's patch series was generated from.
+# setup-port.ps1 refuses to build against a different version.
+1.0.4.8
