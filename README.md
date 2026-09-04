@@ -11,10 +11,11 @@ permission. So nothing of theirs is distributed here. What you get is the **diff
 | | |
 |---|---|
 | `patches/` | 32 files' worth of changes: **+747 lines of our code**, 265 lines of context |
-| `newfiles/` | 12 source files written from scratch |
+| `newfiles/` | 11 source files written from scratch |
 | `projects/` | the `.csproj` / props files (the studio's VS2013 projects never shipped) |
 | `tools/` | our own tools: shader transcoder, content probe, data exporter, proxy generator |
-| `scripts/` | the setup and build orchestration |
+| `orchestrator/` | `uwkit` - the Go source for the single-binary build orchestrator |
+| `scripts/` | the PowerShell reference implementation |
 
 Everything of the studio's — 1,496 unchanged source files, all art, audio, text, shaders — comes
 off **your** installation, decompiled on **your** machine. Your game folder is only ever read.
@@ -35,38 +36,69 @@ Deleting this folder removes everything except the SDK.
 
 ## Use it
 
+Download `uwkit.exe` and the kit zip from
+[Releases](https://github.com/masaykh/unclaimedworld_modding/releases), unpack somewhere with a
+few GB free, and run:
+
 ```
-powershell -ExecutionPolicy Bypass -File setup-port.ps1 -CheckOnly    report, change nothing
-powershell -ExecutionPolicy Bypass -File setup-port.ps1              do it
+uwkit -check      report what is needed, change nothing
+uwkit             do it
 ```
 
-`-CheckOnly` tells you what is missing, what can be installed locally, and how many MB it would
-download, without touching anything. The real run asks before each of those.
+`uwkit.exe` is a single static binary. **No PowerShell, no `cmd` scripting, no `sh`, no GNU
+`patch`, no `git`** — which matters because PowerShell is disabled by policy on plenty of
+machines. The only external tool it needs is `dotnet`.
+
+`-check` tells you what is missing, what can be installed locally, and how many MB it would
+download, without touching anything. The real run asks before each download.
 
 Then run `port\UnclaimedWorld.exe`.
 
 ### Options
 
 ```
--Harmony       yes|no    the Harmony mod loader (loads user/Mods/*.dll)
--UnhiddenMod   yes|no    bundled community mod: adds items/recipes. CHANGES SAVE COMPATIBILITY
--MenuAnimation yes|no    build the animated menu background (needs ffmpeg)
--Assets        auto|link|copy|none    how the game's Content/data get into the build
--Game <path>   your installation, if it is not found automatically
+-game <path>       your installation, if it is not found automatically
+-assets auto|link|copy|none    how the game's Content/data get into the build
+-no-harmony        build without the Harmony mod loader
+-no-mod            build without the bundled Unhidden Mod (CHANGES SAVE COMPATIBILITY)
+-no-animation      no animated menu background
+-y                 accept the prompts (non-interactive)
 ```
 
-A feature set to `no` is **not compiled in** — not merely disabled. `-Harmony no` produces a
-build that references no HarmonyLib and ships no `0Harmony.dll`, so nothing can load third-party
+A feature left out is **not compiled in** — not merely disabled. `-no-harmony` produces a build
+that references no HarmonyLib and ships no `0Harmony.dll` at all, so nothing can load third-party
 code into the process.
 
 ### Assets
 
-`-Assets auto` tries a directory junction for `Content\` — instant, no copy, no administrator
-rights — and falls back to offering a copy if the filesystem cannot hold reparse points (exFAT
-and FAT32 cannot). Support is established by *creating* one, not by reading the filesystem name.
+`-assets auto` tries a directory junction for `Content\` — instant, no copy, no administrator
+rights — and offers a copy instead if the filesystem cannot hold reparse points (exFAT and FAT32
+cannot). Support is established by *creating* a junction, not by reading the filesystem name.
 
-`data\` is **always a real copy**, never a link: `--export-data` writes into `data\BaseData\`, and
-a link would put that inside your real game folder.
+Only what the game **writes** to is copied; everything else is linked. Measured, that is one
+directory:
+
+```
+data\BaseData      1 KB   --export-data writes here     -> copied
+data\Maps        102 MB   read-only                     -> junction
+Content          317 MB   read-only (the converted shaders live in port-content\)  -> junction
+```
+
+So a linked build is about **14 MB** on disk, and nothing can write into your game folder.
+
+### The PowerShell scripts
+
+`setup-port.ps1` and `scripts/` are the original implementation and still work:
+
+```
+powershell -ExecutionPolicy Bypass -File setup-port.ps1 -CheckOnly
+```
+
+They are kept as a reference — having two independent implementations of the patch applier is how
+a hunk-boundary bug in it was found — but `uwkit.exe` is the one to reach for. It also does two
+things the scripts cannot: it reads the game's `FileVersion` through `version.dll` (`cmd` has no
+way to do this at all now that `wmic` is gone from Windows 11), and it applies patches without
+needing GNU `patch` installed.
 
 ## What it does, and how far it is verified
 
@@ -100,32 +132,20 @@ content type.
 
 ## Licensing
 
-The code in `patches/`, `newfiles/`, `projects/`, `tools/` and `scripts/` is ours to share. The
+The code in `patches/`, `newfiles/`, `projects/`, `tools/`, `scripts/` and `orchestrator/` is MIT
+(see `LICENSE`); third-party components are listed in `THIRD-PARTY-NOTICES.md`. The
 game's code and assets are Refactored Games' and are not included. You need your own legally
 obtained copy. If you are Refactored Games, or can reach them, we would very much like to hear
 from you.
 
-## uwkit.exe — the single-binary orchestrator
+## Contributing patches
 
-`uwkit.exe` does everything the PowerShell scripts do, with **no PowerShell, no `cmd` scripting,
-no `sh`, no GNU `patch` and no `git`**. It is a 6.7 MB static binary with no runtime dependency;
-the only external tool it needs is `dotnet`, which is unavoidable.
+`patches/extra/<Project>/*.patch` is the lane for patches this kit did not ship with. They are
+applied after the kit's own series, in filename order — prefix them (`10-`, `20-`) when order
+matters. Generate one with `diff -U1` against the decompiled tree in `work/src/<Project>/`.
 
-```
-uwkit                 check, ask, then build
-uwkit -check          report what is needed and change nothing
-uwkit -y              accept the prompts
+A patch there that fails to apply stops the build and names itself, so a broken third-party patch
+is never mistaken for the kit being broken.
 
--game <path>          your installation, if it is not found automatically
--assets auto|link|copy|none
--no-harmony           build without the Harmony mod loader
--no-mod               build without the bundled Unhidden Mod
--no-animation         no animated menu background
-```
-
-This exists because PowerShell is disabled by policy on plenty of machines. The `.ps1` scripts
-are kept as the reference implementation and still work, but `uwkit.exe` is the one to reach for.
-
-Two things it does that a script cannot do well: it reads the game's `FileVersion` through
-`version.dll` (cmd has no way to do this at all — `wmic` is gone from Windows 11), and it
-establishes junction support by *creating* one rather than guessing from the filesystem name.
+That is what makes this extensible without a release: write a diff against the decompiled source
+and it composes with everything else.
