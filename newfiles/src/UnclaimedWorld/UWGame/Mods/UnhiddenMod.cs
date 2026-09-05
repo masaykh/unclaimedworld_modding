@@ -44,14 +44,22 @@ namespace UWGame.Mods;
 ///
 ///   Simulation content - CHANGES BALANCE AND SAVE COMPATIBILITY
 ///     * item:charcoal is redefined to carry the "fuelForForge" fuel TAG
-///     * item:peatCharcoal is added as a second forge fuel
-///     * makePeatCharcoal is added as a craftable process
+///     * makeCharcoalFromPeat is added: 1 dry peat -> 1 REAL charcoal
 ///     * structure:simpleSmithy and structure:improvisedSmithy are redefined to require the
-///       "fuelForForge" tag instead of the literal item:charcoal, so either fuel works
+///       "fuelForForge" tag instead of the literal item:charcoal, so any tagged fuel works
 ///
-/// The second group adds EntityTypes and ProcessTypes to the tables the snapshot serializer
-/// resolves against. A save made with the mod on may not load with it off, and one containing
-/// peat charcoal certainly will not. That is why this is switchable rather than unconditional.
+/// WHAT IT NO LONGER CHANGES, and why. It used to add item:peatCharcoal, a second forge fuel,
+/// with a makePeatCharcoal recipe. That was the riskiest thing here: a NEW EntityType key, which
+/// the snapshot serializer resolves by name, so a save holding one item of it could not be loaded
+/// by a build without the mod at all - not "might misbehave", could not load. It also could not be
+/// made into gunpowder or sold, because much of the game matches charcoal by key rather than by
+/// tag. Both problems are answered by producing the real item instead, which makeCharcoalFromPeat
+/// does, so the separate item was removed rather than kept alongside it.
+///
+/// What remains adds one ProcessType key and no EntityType keys, and it is switchable at
+/// <c>unhidden.charcoalFromPeat</c> in user/ModSettings.xml. A save is stamped with the modded
+/// content it was made with (see <see cref="ModSettings.Signature"/>), so loading it into a
+/// mismatched configuration is caught and offered a fix rather than failing in the loader.
 /// </summary>
 public static class UnhiddenMod
 {
@@ -73,6 +81,61 @@ public static class UnhiddenMod
 
     /// <summary>Toggled by "O" in Client.HandleInput, read by DateAndTime.ComputeSunAndLight.</summary>
     public static bool ShadowsDisabled;
+
+    // ---------------------------------------------------------------------------- settings
+    //
+    // The mod's switches, in user/ModSettings.xml and in the MODS section of the options menu.
+    // Registered once from Program.Main, BEFORE any data table is built - AddProcesses reads
+    // CharcoalFromPeat while the tables are being assembled, so a registration that happened
+    // later would be a registration that happened after it mattered.
+    //
+    // Each field holds the ModSetting object rather than a copy of its value, so the options
+    // menu changing a value is visible here with no plumbing in between.
+
+    private static ModSetting charcoalFromPeat;
+
+    private static ModSetting experimental;
+
+    /// <summary>
+    /// Whether the peat route is in the tables. The one switch here that changes what a save
+    /// contains: it adds the makeCharcoalFromPeat ProcessType key, which a save can name.
+    /// </summary>
+    public static ModSetting CharcoalFromPeat =>
+        charcoalFromPeat ?? (charcoalFromPeat = ModSettings.Toggle(
+            ModId, "charcoalFromPeat", "CHARCOAL FROM PEAT", defaultValue: true,
+            toolTip: "Adds the recipe that turns 1 dry peat into 1 charcoal in a kiln, for maps " +
+                     "where trees are scarce. Off gives the stock game's firewood route only. " +
+                     "Changes what a save contains: a save made with this on names a recipe a " +
+                     "build without it does not have.",
+            affectsSimulation: true, takesEffectOnNextLoad: true));
+
+    /// <summary>
+    /// A switch that does nothing, on purpose.
+    ///
+    /// It is here so that trying something out costs a recompile and not a redesign: hang an
+    /// experiment on <c>if (UnhiddenMod.Experimental.On)</c>, and it arrives with a config entry,
+    /// a menu checkbox and a save stamp already working. Marked as affecting the simulation
+    /// because an experiment usually does, and a save made under one should say so.
+    /// </summary>
+    public static ModSetting Experimental =>
+        experimental ?? (experimental = ModSettings.Toggle(
+            ModId, "experimental", "EXPERIMENTAL", defaultValue: false,
+            toolTip: "Reserved for whatever is being tried out in this build. Off in a release.",
+            affectsSimulation: true, takesEffectOnNextLoad: true));
+
+    /// <summary>The prefix its settings carry in the file and in save signatures.</summary>
+    public const string ModId = "unhidden";
+
+    /// <summary>
+    /// Registers every switch above. Call once at startup, after ModSettings.Load and before the
+    /// first data load. Touching each property is what registers it - there is no list to keep in
+    /// step with the fields, which is one fewer thing to forget.
+    /// </summary>
+    public static void RegisterSettings()
+    {
+        _ = CharcoalFromPeat;
+        _ = Experimental;
+    }
 
     /// <summary>
     /// Scenario headers including user-made ones.
@@ -107,11 +170,7 @@ public static class UnhiddenMod
         Config.Culture = CultureInfo.GetCultureInfo("en-GB");
     }
 
-    private static EntityType peatCharcoal;
-
     private static EntityType charcoal;
-
-    private static ProcessType makePeatCharcoal;
 
     private static ProcessType makeCharcoalFromPeat;
 
@@ -172,115 +231,36 @@ public static class UnhiddenMod
         // Kept for RegisterAttainability: the peat route has to be attached to the charcoal the
         // game actually indexes, which is this replacement instance, not the one it replaced.
         charcoal = listOfEntityTypes[index];
-
-        peatCharcoal = new EntityType("item:peatCharcoal")
-        {
-            Name = "Charcoal (Peat)",
-            SummaryDescription = "Less traditional fuel type made from heat treated dried peat",
-            Description = "Charcoal can provide a more intense heat than firewood and is often required for primitive metalworking. Making it from peat is quite inefficient due to low percent of carbon in material.",
-            ItemType = new ItemType
-            {
-                MaximumBulk = 0.3f,
-                FuelType = new FuelType
-                {
-                    FuelTags = new string[1] { "fuelForForge" }
-                }
-            },
-            NonLivingType = new NonLivingType
-            {
-                Repairability = 0f,
-                DegradeType = "stored dry"
-            },
-            TierOrArea = new TierOrArea
-            {
-                Tier = "basic"
-            },
-            CategoryKey = "rawMaterials",
-            RenderableType = new RenderableType
-            {
-                DefaultClientState = new ClientStateInfo
-                {
-                    RenderAsBillboardType = new RenderAsBillboardType[1]
-                    {
-                        new RenderAsBillboardType
-                        {
-                            AssetName = "charcoal"
-                        }
-                    }
-                }
-            }
-        };
-        listOfEntityTypes.Add(peatCharcoal);
     }
 
-    /// <summary>Called at the end of ProcessLoader.InitProcessTypes.</summary>
+    /// <summary>
+    /// Called at the end of ProcessLoader.InitProcessTypes. Adds the peat route, unless
+    /// <c>unhidden.charcoalFromPeat</c> is off - which is the one switch in this mod that changes
+    /// what a save contains, and so the one recorded in the save header.
+    /// </summary>
     public static void AddProcesses(List<ProcessType> listOfProcessTypes)
     {
-        makePeatCharcoal = new ProcessType
+        if (!CharcoalFromPeat.On)
         {
-            Name = "Producing",
-            KeyName = "makePeatCharcoal",
-            JobTypeKey = "craftingJobType",
-            RequiredSkill = "bushcraft",
-            PhysicalWorkFactor = 4f,
-            WorkNeeded = WorkerNeededOptions.WorkerOnlyNeededToStart,
-            Stances = ProcessLoader.GetToolMakingStances(),
-            Inputs = new Input[1]
-            {
-                new Input
-                {
-                    Entity = "item:dryPeat",
-                    IsConsumed = true,
-                    Amount = new InputAmount
-                    {
-                        NoOfItems = 4
-                    }
-                }
-            },
-            Outputs = new Output[1]
-            {
-                new Output
-                {
-                    EntityTypeToCreate = "item:peatCharcoal",
-                    Amount = new OutputAmount
-                    {
-                        NoOfItems = 2
-                    },
-                    ToolContainerTagsToPlaceIn = new string[1] { "kiln" }
-                }
-            },
-            // Deliberately slower than ordinary charcoal.
-            WorkOrTimeNeeded = new WorkOrTime
-            {
-                DaysNeeded = 1f / 20f
-            },
-            ProcessToolSetKey = "toolSetKilnBigAndSmall",
-            AgentAnimationStates = new AnimModifier[1] { AnimModifier.Improvised }
-        };
-
-        // The patch also inserted into GameData.Instance.AllProcessTypes here. That is left to
-        // the game: InitProcessTypes' caller registers everything the returned list holds, and
-        // adding it in both places throws on the duplicate key.
-        listOfProcessTypes.Add(makePeatCharcoal);
+            return;
+        }
 
         // ------------------------------------------------------------------ charcoal from peat
         //
-        // Peat as a source of REAL charcoal, not only of the mod's own peat charcoal.
+        // Peat as a source of REAL charcoal.
         //
-        // The reason this is a separate recipe rather than a change to the one above: peat
-        // charcoal is a distinct EntityType, and a good deal of the game matches charcoal by
-        // KEY rather than by tag. Gunpowder takes "item:charcoal" as a literal input
+        // Why the real item and not an item of its own. Much of the game matches charcoal by KEY
+        // rather than by tag: gunpowder takes "item:charcoal" as a literal input
         // (ProcessLoader.cs:11565), and PricesProfileLoader and TradeGroupLoader both price and
-        // trade "item:charcoal" while knowing nothing about peat charcoal. So peat charcoal
-        // burns in a forge - the mod's retagging handles that - but cannot be turned into
-        // gunpowder or sold, and any future consumer that names charcoal directly will refuse it
-        // too. Producing the real item closes all of that at once, with no edits to the tables
-        // that name it.
+        // trade "item:charcoal" while knowing nothing about any other kind. An earlier version of
+        // this mod added item:peatCharcoal, which burned in a forge - the retagging above handles
+        // that - but could never be turned into gunpowder or sold, and which put a brand new
+        // EntityType key into saves. Producing the real item closes all of that at once, with no
+        // edits to the tables that name it and no new key in the snapshot.
         //
         // Balance:
         //
-        //   makePeatCharcoal      4 dry peat -> 2 peat charcoal, 1/20 day   (cheap bulk fuel)
-        //   makeCharcoalFromPeat  1 dry peat -> 1 charcoal,      1/15 day   (real charcoal)
+        //   makeCharcoalFromPeat  1 dry peat -> 1 charcoal,      1/15 day   (peat route)
         //   makeCharcoal (stock)  1 firewood -> 1 charcoal,      1/30 day   (firewood route)
         //
         // 1:1 on purpose, matching the stock firewood conversion, because the cost of this route
@@ -339,19 +319,11 @@ public static class UnhiddenMod
 
     /// <summary>
     /// Called at the end of InventorySettings.EndRecomputeAttainability. Without this the new
-    /// item is producible but never offered, because attainability was computed from the tables
-    /// as they stood before the addition.
+    /// recipe works but is never offered, because attainability was computed from the tables as
+    /// they stood before the addition.
     /// </summary>
     public static void RegisterAttainability(Dictionary<EntityType, Dictionary<ProcessType, AttainableInfo>> attainableInfo)
     {
-        if (peatCharcoal != null && makePeatCharcoal != null && !attainableInfo.ContainsKey(peatCharcoal))
-        {
-            attainableInfo.Add(peatCharcoal, new Dictionary<ProcessType, AttainableInfo>
-            {
-                { makePeatCharcoal, Producable }
-            });
-        }
-
         // Charcoal is a pre-existing item and already has an entry, from the stock firewood
         // recipe - so this adds the peat route INTO that entry rather than creating one. Without
         // it the recipe exists and works but is never offered in the production list, because

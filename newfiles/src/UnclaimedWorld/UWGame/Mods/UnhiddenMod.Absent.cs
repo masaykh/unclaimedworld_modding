@@ -39,6 +39,16 @@ public static class UnhiddenMod
     {
     }
 
+    /// <summary>
+    /// Registers nothing. The mod's switches describe the mod's content, and this build has none
+    /// of it - an installation without the mod should not carry its settings around, and the
+    /// options menu should not show switches that cannot do anything. The port's own entries
+    /// (PortSettings) are registered separately and are present either way.
+    /// </summary>
+    public static void RegisterSettings()
+    {
+    }
+
     public static List<Scenario> AllScenarioHeaders()
     {
         return null;

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -15,6 +15,7 @@ internal static class Program
     {
         string target = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
         bool readBack = args.Contains("--read-back");
+        bool settingsSelfTest = args.Contains("--settings-selftest");
 
         // The bundled Unhidden Mod is on by default and its content hooks run inside the data
         // load, so an export made without this reflects the MODDED tables. That is usually what
@@ -43,6 +44,10 @@ internal static class Program
             Console.Error.WriteLine();
             Console.Error.WriteLine("  --nomods     export the stock tables, with the bundled Unhidden Mod off.");
             Console.Error.WriteLine("               Without this the export includes the mod's content.");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("  --settings-selftest");
+            Console.Error.WriteLine("               write, re-read and verify user/ModSettings.xml in <game-dir>,");
+            Console.Error.WriteLine("               and load nothing else. Used by build/80-verify-modloader.sh.");
             return 2;
         }
 
@@ -50,6 +55,12 @@ internal static class Program
         {
             Console.Error.WriteLine($"FATAL: no such directory: {target}");
             return 1;
+        }
+
+        if (settingsSelfTest)
+        {
+            Directory.SetCurrentDirectory(target);
+            return SettingsSelfTest();
         }
 
         // Config.GetDataFolderPath returns paths relative to the working directory ("data/BaseData"),
@@ -64,6 +75,24 @@ internal static class Program
         // This is the whole reason a data mod can be developed without launching: a Harmony patch
         // on ItemLoader.Init or ProcessLoader.InitProcessTypes shows up in the exported XML, so
         // "did my patch apply, and what did it produce" is answerable in a second from a console.
+        // Mod configuration, from the target's user/ModSettings.xml - after the working directory
+        // is set, because that is what it resolves against. The switches shape the tables, so an
+        // export made without reading them would describe a game nobody is running.
+        UWGame.Mods.ModSettings.Load((message, title) => Console.WriteLine("    " + title + ": " + message));
+        UWGame.Mods.PortSettings.RegisterSettings();
+        if (UWGame.Mods.UnhiddenMod.Enabled)
+        {
+            UWGame.Mods.UnhiddenMod.RegisterSettings();
+        }
+        foreach (UWGame.Mods.ModSetting setting in UWGame.Mods.ModSettings.All)
+        {
+            if (!setting.IsDefault)
+            {
+                Console.WriteLine("==> setting: " + setting.Id + " = " + setting.Value +
+                                  " (default " + setting.DefaultValue + ")");
+            }
+        }
+
         UWGame.Mods.ModLoader.LoadAll((message, title) => Console.WriteLine("    " + title + ": " + message));
         if (UWGame.Mods.ModLoader.Loaded.Count > 0 || UWGame.Mods.ModLoader.Failed.Count > 0)
         {
@@ -86,6 +115,94 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine("Done.");
         return 0;
+    }
+
+    /// <summary>
+    /// Round-trips user/ModSettings.xml: register, change, write, forget, read back.
+    ///
+    /// This exists because the WRITE side of the settings file has no other offline witness. A
+    /// player's configuration surviving is the whole promise of the file, and the two ways it
+    /// could quietly break - a value that does not come back, and an entry belonging to a mod
+    /// that is not installed being dropped on the next save - are both invisible until someone
+    /// loses their settings. Neither needs the game to be running to check.
+    ///
+    /// It writes into the target installation's user/ folder, which is why the verify script
+    /// gives it a throwaway one.
+    /// </summary>
+    private static int SettingsSelfTest()
+    {
+        Console.WriteLine("==> settings self-test in " + Directory.GetCurrentDirectory());
+        int failures = 0;
+        void Check(bool ok, string what)
+        {
+            Console.WriteLine((ok ? "  ok    " : "  FAIL  ") + what);
+            if (!ok)
+            {
+                failures++;
+            }
+        }
+
+        string path = UWGame.Mods.ModSettings.FilePath;
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+
+        // A file written by hand, holding an entry nothing will claim.
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        File.WriteAllText(path,
+            "<ModSettings>" + Environment.NewLine +
+            "  <Setting id=\"someOtherMod.itsSetting\" value=\"keep me\" />" + Environment.NewLine +
+            "</ModSettings>" + Environment.NewLine);
+
+        UWGame.Mods.ModSettings.Reset();
+        UWGame.Mods.ModSettings.Load((m, t) => Console.WriteLine("    " + t + ": " + m));
+        UWGame.Mods.PortSettings.RegisterSettings();
+        UWGame.Mods.ModSetting dateFormat = UWGame.Mods.PortSettings.SaveDateFormat;
+
+        Check(dateFormat.Value == dateFormat.DefaultValue, "an unset setting reads as its default");
+
+        dateFormat.Value = "dd-MM-yyyy HH:mm";
+        Check(UWGame.Mods.ModSettings.Save((m, t) => Console.WriteLine("    " + t + ": " + m)),
+              "the file was written");
+
+        UWGame.Mods.ModSettings.Reset();
+        UWGame.Mods.ModSettings.Load((m, t) => Console.WriteLine("    " + t + ": " + m));
+        UWGame.Mods.PortSettings.RegisterSettings();
+        Check(UWGame.Mods.PortSettings.SaveDateFormat.Value == "dd-MM-yyyy HH:mm",
+              "the changed value came back");
+
+        string written = File.ReadAllText(path);
+        Check(written.Contains("someOtherMod.itsSetting") && written.Contains("keep me"),
+              "an entry for a mod that is not installed survived the rewrite");
+
+        // A value outside the allowed set falls back rather than being taken.
+        UWGame.Mods.PortSettings.SaveDateFormat.Value = "not a format this build offers";
+        Check(UWGame.Mods.PortSettings.SaveDateFormat.Value == dateFormat.DefaultValue,
+              "an unrecognised choice falls back to the default");
+
+        // Signature and ApplySignature are what a save is stamped with and matched against.
+        UWGame.Mods.ModSetting sim = UWGame.Mods.ModSettings.Toggle(
+            "selftest", "content", "SELF TEST CONTENT", defaultValue: true, toolTip: null,
+            affectsSimulation: true);
+        Check(UWGame.Mods.ModSettings.Signature().Contains("selftest.content=true"),
+              "a setting that is ON is named in the signature even though it is also the default");
+        sim.Value = "false";
+        Check(UWGame.Mods.ModSettings.Signature() == "",
+              "a stock configuration signs as stock");
+        UWGame.Mods.ModSettings.ApplySignature("selftest.content=true");
+        Check(sim.On, "applying a signature turns its content back on");
+        UWGame.Mods.ModSettings.ApplySignature("");
+        Check(!sim.On, "applying an empty signature returns to stock");
+
+        Console.WriteLine();
+        if (failures == 0)
+        {
+            Console.WriteLine("settings self-test OK");
+            return 0;
+        }
+        Console.WriteLine($"settings self-test FAILED - {failures} check(s)");
+        return 1;
     }
 
     private static int Run(Sim.SerializeMode mode, string what)

@@ -1,13 +1,14 @@
 --- a/GameStateManagement/Program.cs
 +++ b/GameStateManagement/Program.cs
 @@ -1,4 +1,4 @@
- using System;
+-using System;
 -using System.Windows.Forms;
 -using Microsoft.Win32;
++﻿using System;
 +using UWGame.Port;
 +using UWGame.SimSide;
  
-@@ -8,9 +8,117 @@
+@@ -8,9 +8,129 @@
  {
 +	/// <summary>
 +	/// PORT DEVIATION 13 (see PORTING-NOTES.md). Was <c>Main()</c>, with no arguments at all.
@@ -77,8 +78,7 @@
 -		object value = Registry.GetValue("HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Active Setup\\Installed Components\\{22d6f312-b0f6-11d0-94ab-0080c74c7e95}", "IsInstalled", null);
 -		if (value == null || value.ToString() != "1")
 +		if (!ApplyDataFlags(args))
- 		{
--			MessageBox.Show("It appears that you don't have Windows Media Player installed. This game needs system features bound to Windows Media Player. Please install the Media Feature Pack corresponding to your Windows version to run this game:" + Environment.NewLine + Environment.NewLine + "Windows 7: http://www.microsoft.com/en-US/download/details.aspx?id=16546" + Environment.NewLine + Environment.NewLine + "Windows 8: http://www.microsoft.com/en-US/download/details.aspx?id=30685" + Environment.NewLine + Environment.NewLine + "Windows 8.1: http://www.microsoft.com/en-US/download/details.aspx?id=40744" + Environment.NewLine + Environment.NewLine + "Windows 10: https://www.microsoft.com/en-US/download/details.aspx?id=48231" + Environment.NewLine + Environment.NewLine + "Windows Vista & XP: http://www.microsoft.com/en-US/download/windows-media-player-details.aspx?id=8163", "Missing Windows Media Player", MessageBoxButtons.OK, MessageBoxIcon.Hand);
++		{
 +			return;
 +		}
 +		// -nomods gives the stock game: it switches off both the bundled Unhidden Mod and the
@@ -96,6 +96,18 @@
 +		if (UWGame.Mods.UnhiddenMod.Enabled)
 +		{
 +			UWGame.Mods.UnhiddenMod.ApplyCulture();
++		}
++
++		// Mod configuration, from user/ModSettings.xml. Read BEFORE anything registers a setting
++		// and long before the first data table is built, because a switch that shapes the tables -
++		// the bundled mod's peat recipe is one - is read while they are being assembled. The
++		// port's own entries are registered either way; the bundled mod's only when it is present
++		// and on, so -nomods leaves no trace of it in the file or the menu.
++		UWGame.Mods.ModSettings.Load(UnclaimedWorld.LogError);
++		UWGame.Mods.PortSettings.RegisterSettings();
++		if (UWGame.Mods.UnhiddenMod.Enabled)
++		{
++			UWGame.Mods.UnhiddenMod.RegisterSettings();
 +		}
 +
 +		// Third-party mods from user/Mods. Before the game object is constructed, so a mod can
@@ -126,17 +138,18 @@
 +		// installation - whose Content\ shaders are deliberately still v8 - does not trip it.
 +		string effectProblem = EffectVersionCheck.Check();
 +		if (effectProblem != null)
-+		{
+ 		{
+-			MessageBox.Show("It appears that you don't have Windows Media Player installed. This game needs system features bound to Windows Media Player. Please install the Media Feature Pack corresponding to your Windows version to run this game:" + Environment.NewLine + Environment.NewLine + "Windows 7: http://www.microsoft.com/en-US/download/details.aspx?id=16546" + Environment.NewLine + Environment.NewLine + "Windows 8: http://www.microsoft.com/en-US/download/details.aspx?id=30685" + Environment.NewLine + Environment.NewLine + "Windows 8.1: http://www.microsoft.com/en-US/download/details.aspx?id=40744" + Environment.NewLine + Environment.NewLine + "Windows 10: https://www.microsoft.com/en-US/download/details.aspx?id=48231" + Environment.NewLine + Environment.NewLine + "Windows Vista & XP: http://www.microsoft.com/en-US/download/windows-media-player-details.aspx?id=8163", "Missing Windows Media Player", MessageBoxButtons.OK, MessageBoxIcon.Hand);
 +			PlatformWindow.ShowErrorDialog(IntPtr.Zero, effectProblem, "Shaders not set up");
  			return;
-@@ -19,2 +127,6 @@
+@@ -19,2 +139,6 @@
  		unclaimedWorld.Exiting += game_Exiting;
 +		// NOTE: game 1.0.4.8 DELETED the target-monitor placement that used to be here, so the
 +		// port follows it and no longer calls PlatformWindow.PlaceWindowOnMonitor. The helper is
 +		// kept (PORT DEVIATION 10 still covers the codec dialog above), so restoring the
 +		// behaviour is one line if Options.TargetMonitorNumber is wanted back.
  		try
-@@ -29,2 +141,6 @@
+@@ -29,2 +153,6 @@
  
 +	// NOTE: `windowForm_Load` used to sit here - 13 lines of WinForms that positioned the
 +	// window on `Screen.AllScreens[1]` with a hardcoded monitor index of 2. It had no
@@ -1791,6 +1804,24 @@
 +	// fields reflectively, without pulling in the now-static BCL type.
 +	public object Help;
  
+--- a/UWGame/ClientSide/Interface/InGameMenuDialog.cs
++++ b/UWGame/ClientSide/Interface/InGameMenuDialog.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.IO;
+@@ -115,3 +115,10 @@
+ 		}
+-		if (The.Sim.StartGameParams.IsSameScenario(snapshotHeader.StartGameParams))
++		// The direct path keeps the data tables that are already in memory - which is what makes it
++		// fast, and what makes it wrong when the save needs different ones. The tables were built
++		// once when this session started; a save that names a modded recipe cannot be resolved
++		// against tables built without it. So a difference in modded content redirects through the
++		// loading screen exactly the way a different scenario does, and that path rebuilds them.
++		bool sameMods = string.Equals(snapshotHeader.Mods ?? "",
++			UWGame.Mods.ModSettings.EffectiveSignature, StringComparison.Ordinal);
++		if (The.Sim.StartGameParams.IsSameScenario(snapshotHeader.StartGameParams) && sameMods)
+ 		{
 --- a/UWGame/ClientSide/Interface/Inventory/InventorySettings.cs
 +++ b/UWGame/ClientSide/Interface/Inventory/InventorySettings.cs
 @@ -401,2 +401,8 @@
@@ -1834,13 +1865,274 @@
 +			textButton7.Width = 59;
 +		}
  	}
+--- a/UWGame/ClientSide/Interface/OptionsDialog.cs
++++ b/UWGame/ClientSide/Interface/OptionsDialog.cs
+@@ -1,2 +1,3 @@
+-using System;
++﻿using System;
++using System.Collections.Generic;
+ using System.Linq;
+@@ -6,2 +7,3 @@
+ using UWGame.ClientSide.Interface.LCD;
++using UWGame.Mods;
+ using WindowSystem;
+@@ -50,2 +52,12 @@
+ 
++	/// <summary>
++	/// The controls built for the MODS section, paired with the setting each one edits.
++	///
++	/// A list rather than named fields because there is no list of mod settings to name: what is
++	/// here depends on which mods are installed, which is only known at run time. Everything else
++	/// in this dialog is a field because everything else is fixed at compile time.
++	/// </summary>
++	private readonly List<KeyValuePair<ModSetting, UIComponent>> modControls =
++		new List<KeyValuePair<ModSetting, UIComponent>>();
++
+ 	private const int xPos = 6;
+@@ -240,2 +252,3 @@
+ 		fbSoundVolume.KnobWidth = 16;
++		BuildModsSection(uIComponent, fbSoundVolume.Bottom + 24);
+ 		errorsAndMessages = new ErrorsAndMessages(lcdSurface, Window.guiManager, 6, lcdSurface.Height - 24);
+@@ -322,2 +335,159 @@
+ 
++	/// <summary>
++	/// The MODS section: one control per registered <see cref="ModSetting"/>, in registration
++	/// order.
++	///
++	/// It is built from the registry rather than from a list of fields because a third-party mod
++	/// cannot add a field to this class - which is the whole reason mod settings do not live in
++	/// Options.xml. A build with no mods still gets the section, because the port registers two
++	/// entries of its own (see PortSettings), so this code is exercised everywhere rather than
++	/// only where someone has installed something.
++	///
++	/// The surface grows to fit; it is inside a scrolling grid, so a long list scrolls rather than
++	/// being cut off.
++	/// </summary>
++	private void BuildModsSection(UIComponent panel, int y)
++	{
++		modControls.Clear();
++		if (ModSettings.All.Count == 0)
++		{
++			return;
++		}
++
++		Label header = AddSectionHeader(y, panel, "MODS");
++		int lineY = header.Bottom + 6;
++
++		bool anyNeedsReload = ModSettings.All.Any((ModSetting m) => m.TakesEffectOnNextLoad);
++		if (anyNeedsReload)
++		{
++			Label note = new Label(Interface.gui);
++			panel.Add(note);
++			note.Init(Label.LabelType.LCDNormal);
++			note.NormalColor = UIComponent.errorColor;
++			note.Text = "Content changes apply the next time a game is started or loaded!";
++			note.FitToText();
++			note.X = 6;
++			note.Y = lineY;
++			lineY = note.Bottom + 6;
++		}
++
++		foreach (ModSetting setting in ModSettings.All)
++		{
++			string toolTip = setting.ToolTip;
++			if (setting.AffectsSimulation)
++			{
++				toolTip += " Changes what a save contains: saves made with it on are marked MODDED.";
++			}
++
++			switch (setting.Kind)
++			{
++			case ModSettingKind.Toggle:
++			{
++				CheckBox checkBox = new CheckBox(Interface.gui);
++				panel.Add(checkBox);
++				checkBox.Init(CheckBoxType.LCD, CheckBoxFlavor.Green);
++				checkBox.Text = setting.Label;
++				checkBox.FitToText();
++				checkBox.X = 6;
++				checkBox.Y = lineY;
++				checkBox.ToolTip = toolTip;
++				checkBox.TooltipWidth = 320;
++				checkBox.IsChecked = setting.On;
++				modControls.Add(new KeyValuePair<ModSetting, UIComponent>(setting, checkBox));
++				lineY = checkBox.Bottom + 8;
++				break;
++			}
++			case ModSettingKind.Choice:
++			{
++				Label caption = new Label(Interface.gui);
++				panel.Add(caption);
++				caption.Init(Label.LabelType.LCDSmallHeadingBanner);
++				caption.Text = setting.Label + ":";
++				caption.FitToText();
++				caption.X = 6;
++				caption.Y = lineY;
++				caption.ToolTip = toolTip;
++				caption.TooltipWidth = 320;
++				ComboBox comboBox = new ComboBox(Interface.gui, ListBoxType.LCDCombo, isEditable: false);
++				panel.Add(comboBox);
++				comboBox.Init(ComboBoxTypes.LCD);
++				comboBox.X = 128;
++				comboBox.Width = 200;
++				comboBox.CenterThisVertically(caption.Y + caption.Height / 2);
++				comboBox.ToolTip = toolTip;
++				foreach (string choice in setting.Choices ?? new string[0])
++				{
++					comboBox.AddEntry(choice, choice);
++				}
++				if (comboBox.EntriesByKey.ContainsKey(setting.Value))
++				{
++					comboBox.SelectedKey = setting.Value;
++				}
++				modControls.Add(new KeyValuePair<ModSetting, UIComponent>(setting, comboBox));
++				lineY = Math.Max(caption.Bottom, comboBox.Bottom) + 8;
++				break;
++			}
++			default:
++			{
++				Label caption2 = new Label(Interface.gui);
++				panel.Add(caption2);
++				caption2.Init(Label.LabelType.LCDSmallHeadingBanner);
++				caption2.Text = setting.Label + ":";
++				caption2.FitToText();
++				caption2.X = 6;
++				caption2.Y = lineY;
++				caption2.ToolTip = toolTip;
++				TextBox textBox = new TextBox(Interface.gui);
++				panel.Add(textBox);
++				textBox.Init(TextBox.TextBoxType.LCD);
++				textBox.X = 128;
++				textBox.Width = 200;
++				textBox.Height = 20;
++				textBox.VMargin = 1;
++				textBox.IsEditable = true;
++				textBox.Text = setting.Value;
++				textBox.CenterThisVertically(caption2.Y + caption2.Height / 2);
++				textBox.ToolTip = toolTip;
++				modControls.Add(new KeyValuePair<ModSetting, UIComponent>(setting, textBox));
++				lineY = Math.Max(caption2.Bottom, textBox.Bottom) + 8;
++				break;
++			}
++			}
++		}
++
++		if (lineY + 12 > panel.Height)
++		{
++			panel.Height = lineY + 12;
++		}
++	}
++
++	/// <summary>
++	/// Reads the MODS controls back into the settings and writes the file. Called from OK, with
++	/// the rest of the dialog - a setting the player changed and then cancelled must not have
++	/// taken effect, which is why nothing here happens as the controls are clicked.
++	/// </summary>
++	private void ApplyModSettings()
++	{
++		if (modControls.Count == 0)
++		{
++			return;
++		}
++		foreach (KeyValuePair<ModSetting, UIComponent> pair in modControls)
++		{
++			if (pair.Value is CheckBox checkBox)
++			{
++				pair.Key.Value = checkBox.IsChecked ? "true" : "false";
++			}
++			else if (pair.Value is ComboBox comboBox)
++			{
++				pair.Key.Value = comboBox.SelectedKey as string ?? pair.Key.Value;
++			}
++			else if (pair.Value is TextBox textBox)
++			{
++				pair.Key.Value = textBox.Text;
++			}
++		}
++		ModSettings.Save(GameStateManagement.UnclaimedWorld.LogError);
++	}
++
+ 	private Label AddSectionHeader(int xYpos, UIComponent panel, string text)
+@@ -497,2 +667,3 @@
+ 			options.ZoomFactor = 0.01f * (float)fbZoom.Value;
++			ApplyModSettings();
+ 			ApplyAndSaveOptionsToFile();
 --- a/UWGame/ClientSide/Interface/SaveLoadGamePanel.cs
 +++ b/UWGame/ClientSide/Interface/SaveLoadGamePanel.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
 @@ -4,2 +4,3 @@
  using System.IO.Compression;
 +using System.Linq;
  using GameStateManagement;
-@@ -275,2 +276,9 @@
+@@ -8,2 +9,3 @@
+ using UWGame.ClientSide.Interface.LCD;
++using UWGame.Mods;
+ using UWGame.SimSide;
+@@ -51,2 +53,8 @@
+ 
++	/// <summary>The "this save needs different mods" box, created on first use and then reused.</summary>
++	private MessageBox modMessageBox;
++
++	/// <summary>What the save being opened was made with, while that box is up.</summary>
++	private string pendingSaveMods;
++
+ 	public string SelectedSaveGamePath { get; private set; }
+@@ -82,2 +90,13 @@
+ 		}
++		// The same warning the version note above gives, for the other thing that can make a save
++		// unopenable: the modded content it was written with. Stated once, where a player is about
++		// to write or open one, rather than as a dialog on every save - a confirmation seen every
++		// time is a confirmation nobody reads.
++		string moddedNow = ModSettings.Signature();
++		if (!string.IsNullOrEmpty(moddedNow))
++		{
++			taNote.Text += " THIS GAME HAS MODDED CONTENT: "
++				+ ModSettings.Describe(moddedNow).Replace(Environment.NewLine, ", ")
++				+ ". Saves made with it are marked MODDED and need the same content to load.";
++		}
+ 		output = new ErrorsAndMessages(lcdSurface, intf.gui, x, taNote.Bottom);
+@@ -168,3 +187,8 @@
+ 		label3.Y = label2.Bottom + num2;
+-		label3.Text = "Date: " + header.Timestamp.ToString(Config.Culture);
++		// Was header.Timestamp.ToString(Config.Culture). Config.Culture is not a display setting -
++		// it is also ToUpper and the "N" number formats, and it sits beside the number handling on
++		// the XML data path - so a player choosing a culture here to get day-month-year would also
++		// be choosing a decimal separator. The format is its own setting now, applied with the
++		// invariant culture. See PortSettings.SaveDateFormat.
++		label3.Text = "Date: " + ModSettings.FormatDate(header.Timestamp, PortSettings.SaveDateFormat.Value);
+ 		Label label4 = new Label(Interface.gui);
+@@ -184,2 +208,21 @@
+ 		lCDInnerPanel3.Panel.X = lCDInnerPanel2.Panel.Right - 2;
++		// A save carrying modded content says so, in the list, before it is opened. The header is
++		// all this needs - the save list reads headers only - so marking every save costs one
++		// string comparison per row and no additional file reading.
++		if (!string.IsNullOrEmpty(header.Mods))
++		{
++			Label lblModded = new Label(Interface.gui);
++			lCDInnerPanel3.Panel.Add(lblModded);
++			lblModded.Init(Label.LabelType.LCDHeadingRed);
++			lblModded.Text = "MODDED";
++			lblModded.FitToText();
++			lblModded.X = lCDInnerPanel3.Panel.Width - lblModded.Width - 8;
++			lblModded.Y = 5;
++			lblModded.ToolTip = Common.ComposeHeadingAndBlobText(
++				"Made with modded content",
++				ModSettings.Describe(header.Mods) +
++				Environment.NewLine + Environment.NewLine +
++				"Loading it without the same content may fail, because a save names the recipes and " +
++				"items it contains.");
++		}
+ 		TextButton textButton = new TextButton(Interface.gui);
+@@ -193,2 +236,5 @@
+ 		textButton.Tag1 = fullPath;
++		// The stamp travels with the button so the click handler does not have to open the file
++		// again to find out what the save needs.
++		textButton.Tag2 = header.Mods ?? "";
+ 		if (SaveOrLoadValue == SaveOrLoad.Save)
+@@ -275,2 +321,9 @@
  		List<Tuple<string, long, SnapshotHeader>> snapshotHeaders = GetSnapshotHeaders(listOfSavedGamePaths);
 +		// UNHIDDEN MOD: newest save first. The Harmony patch had to replace this whole method
 +		// with a reflection-driven copy to get one sort in; from inside the assembly it is a
@@ -1850,6 +2142,78 @@
 +			snapshotHeaders = snapshotHeaders.OrderByDescending((Tuple<string, long, SnapshotHeader> x) => x.Item3.Timestamp).ToList();
 +		}
  		grid.BeginAddingEntries();
+@@ -288,14 +341,63 @@
+ 		Console.WriteLine(sender.Tag1.ToString());
+-		if (File.Exists(text))
++		if (!File.Exists(text))
+ 		{
+-			SelectedSaveGamePath = text;
+-			if (this.SaveOrLoadClick != null)
+-			{
+-				this.SaveOrLoadClick(this, null);
+-			}
++			output.ShowError("File not found.");
++			return;
+ 		}
+-		else
++		SelectedSaveGamePath = text;
++		// A save names the recipes and items it contains, so one made with different modded
++		// content than this session has may not load at all. Offer to load it with what it was
++		// made with - which works, because the data tables are rebuilt on the way in.
++		string saveMods = (sender.Tag2 as string) ?? "";
++		if (PortSettings.AskAboutModsOnLoad.On
++			&& !string.Equals(saveMods, ModSettings.EffectiveSignature, StringComparison.Ordinal))
+ 		{
+-			output.ShowError("File not found.");
++			AskAboutModsThenLoad(saveMods);
++			return;
+ 		}
++		StartLoad();
++	}
++
++	/// <summary>The load the buttons ultimately arrive at, once the mod question is settled.</summary>
++	private void StartLoad()
++	{
++		if (this.SaveOrLoadClick != null)
++		{
++			this.SaveOrLoadClick(this, null);
++		}
++	}
++
++	/// <summary>
++	/// The save was made with content this session is not running. Say what the difference is and
++	/// let the player choose; OK applies the save's settings FOR THIS SESSION, which is enough
++	/// because every path from here rebuilds the data tables before the save is read.
++	///
++	/// It cannot load or unload a third-party DLL from user/Mods - that is a restart - so a
++	/// difference of those is reported and no more.
++	/// </summary>
++	private void AskAboutModsThenLoad(string saveMods)
++	{
++		string had = ModSettings.Describe(saveMods) ?? "nothing - it is a stock save";
++		string have = ModSettings.Describe(ModSettings.EffectiveSignature) ?? "nothing - this is a stock game";
++		// One box, created on first use and reused. A new one per click would leave a Window behind
++		// in the GUI manager every time somebody changed their mind.
++		pendingSaveMods = saveMods;
++		if (modMessageBox == null)
++		{
++			modMessageBox = new MessageBox(Interface, "DIFFERENT MODS");
++			modMessageBox.OKClick += delegate
++			{
++				// In memory only. The file is not rewritten: this is "open that save", not "change
++				// my settings permanently", and the options menu is where the second one belongs.
++				ModSettings.ApplySignature(pendingSaveMods);
++				StartLoad();
++			};
++		}
++		modMessageBox.ShowMessage(
++			"This save was made with:" + Environment.NewLine + had + Environment.NewLine + Environment.NewLine +
++			"This game is running:" + Environment.NewLine + have + Environment.NewLine + Environment.NewLine +
++			"OK loads it with the settings it was made with, for this session. CANCEL leaves it " +
++			"alone. Turn off ASK ABOUT MODS WHEN LOADING in the options to always load with your " +
++			"own settings instead.",
++			"DIFFERENT MODS", modal: true, MessageBox.ButtonOptions.OKAndCancel);
+ 	}
 --- a/UWGame/ClientSide/MainMenu/Intro/IntroVideoScreen.cs
 +++ b/UWGame/ClientSide/MainMenu/Intro/IntroVideoScreen.cs
 @@ -6,4 +6,4 @@
@@ -1980,6 +2344,34 @@
 -			content = new ContentManager(base.Controller.Game.Services);
 +			content = new UWGame.Port.UwContentManager(base.Controller.Game.Services);
  			content.RootDirectory = "Content";
+--- a/UWGame/Config.cs
++++ b/UWGame/Config.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Globalization;
+@@ -18,3 +18,9 @@
+ 		Replays,
+-		SaveGames
++		SaveGames,
++		/// <summary>
++		/// The folder holding <c>ModSettings.xml</c> - <c>user/</c> in the game folder, beside
++		/// <c>user/Mods</c>. Appended at the END of the enum on purpose: these members are matched
++		/// by value in a switch and adding in the middle would renumber the rest.
++		/// </summary>
++		UserModSettings
+ 	}
+@@ -43,2 +49,4 @@
+ 
++	private const string userFolder = "user";
++
+ 	private const string userScenarioFolder = "user/Scenarios";
+@@ -81,2 +89,5 @@
+ 			break;
++		case DataType.UserModSettings:
++			path = "user";
++			break;
+ 		case DataType.UserSettings:
 --- a/UWGame/Control/BackgroundScreen.cs
 +++ b/UWGame/Control/BackgroundScreen.cs
 @@ -4,4 +4,4 @@
@@ -2604,6 +2996,10 @@
  		if (SunIsUp != sunIsUp)
 --- a/UWGame/SimSide/GameData.cs
 +++ b/UWGame/SimSide/GameData.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections;
 @@ -288,2 +288,5 @@
  
 +	// PORT DEVIATION 16 (see PORTING-NOTES.md). Was LightSourceSpriteSheet, following the game
@@ -2619,9 +3015,86 @@
 +			// new asset or an older one - a derived instance assigns to a base field - so this
 +			// one line is what makes the port version-tolerant here.
  			Instance.LightSourcesSpriteSheet = game.Content.Load<SpriteSheet>("LightSources");
+@@ -2076,2 +2085,5 @@
+ 		instance = null;
++		// The tables are gone, so nothing is built from any configuration any more. Clearing this
++		// is what lets the next game be started with different mod switches.
++		UWGame.Mods.ModSettings.MarkDataUnloaded();
+ 	}
+@@ -2109,2 +2121,6 @@
+ 		}
++		// The tables are now what this session will run with, so record the mod configuration they
++		// were built from. A save is compared against THIS rather than against what is currently
++		// switched on: changing a switch changes the next build, not the tables in memory.
++		UWGame.Mods.ModSettings.MarkDataBuilt();
+ 	}
+--- a/UWGame/SimSide/Snapshots/SnapshotHeader.cs
++++ b/UWGame/SimSide/Snapshots/SnapshotHeader.cs
+@@ -1,3 +1,4 @@
+-using System;
++﻿using System;
+ using GameStateManagement;
++using UWGame.Mods;
+ using UWGame.SimSide.Scenarios;
+@@ -14,3 +15,19 @@
+ 
+-	private Snapshotter.Version version = Snapshotter.Version.Original;
++	/// <summary>
++	/// What modded content this save was made with - <see cref="ModSettings.Signature"/>'s output,
++	/// or "" for a stock game. Written since <see cref="Snapshotter.Version.ModsRecorded"/>; a save
++	/// from before that reads back as "" and is treated as stock, which is what it almost always
++	/// is and, either way, is the only thing that can be said about it.
++	///
++	/// It is in the HEADER rather than the body on purpose: the save list reads headers only, so
++	/// every save can be marked as modded without loading a single game.
++	/// </summary>
++	public string Mods = "";
++
++	/// <summary>
++	/// The version WRITTEN is the newest; the version READ is whatever the file says. Every field
++	/// added after Original has to be guarded by a comparison against this, which is what lets a
++	/// save written by an older build still load.
++	/// </summary>
++	private Snapshotter.Version version = Snapshotter.Version.ModsRecorded;
+ 
+@@ -23,2 +40,4 @@
+ 		Timestamp = DateTime.Now;
++		// The one place a save is written from, so the one place the stamp has to be taken.
++		Mods = ModSettings.Signature();
+ 	}
+@@ -39,2 +58,6 @@
+ 		Timestamp = sn.DoDateTime(Timestamp);
++		if (version >= Snapshotter.Version.ModsRecorded)
++		{
++			Mods = sn.DoString(Mods ?? "");
++		}
+ 		sn.Ignore(ProgramVersion);
+@@ -45,3 +68,3 @@
+ 	{
+-		version = sn.DoVersion(Snapshotter.Version.Original);
++		version = sn.DoVersion(Snapshotter.Version.ModsRecorded);
+ 		return version;
 --- a/UWGame/SimSide/Snapshots/Snapshotter.cs
 +++ b/UWGame/SimSide/Snapshots/Snapshotter.cs
-@@ -714,3 +714,8 @@
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
+@@ -40,3 +40,12 @@
+ 	{
+-		Original = 1u
++		Original = 1u,
++		/// <summary>
++		/// SnapshotHeader gained its Mods field - the modded content a save was made with.
++		///
++		/// Every ISnapshot writes its own version before its fields (see DoVersion, called from
++		/// DoISnapshot), so bumping this for ONE class costs nothing anywhere else: classes that
++		/// still pass Original still write Original, and a file written by an older build still
++		/// reads because the new field is guarded by a comparison against the version READ.
++		/// </summary>
++		ModsRecorded = 2u
+ 	}
+@@ -714,3 +723,8 @@
  			{
 -				CRC.AddData(BitConverter.GetBytes(val.Value));
 +				// PORT DEVIATION 3 (see PORTING-NOTES.md). val is byte?, and BitConverter has no
