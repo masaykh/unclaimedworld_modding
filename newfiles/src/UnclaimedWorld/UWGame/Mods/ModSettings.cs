@@ -22,6 +22,23 @@ public enum ModSettingKind
 }
 
 /// <summary>
+/// Whether this session has a thing a save names. Three states rather than two, because "you
+/// turned it off" and "you do not have it at all" call for different answers: the first is a
+/// checkbox away, the second needs the mod.
+/// </summary>
+public enum ModContentState
+{
+    /// <summary>Loaded, or set to the value the save was made with.</summary>
+    Present,
+
+    /// <summary>This build knows it and it is switched off, or set to something else.</summary>
+    Disabled,
+
+    /// <summary>Nothing here knows it - the mod is not installed.</summary>
+    Missing
+}
+
+/// <summary>
 /// One switch belonging to one mod. Created through <see cref="ModSettings.Toggle"/>,
 /// <see cref="ModSettings.Choice"/> or <see cref="ModSettings.Text"/> - never with `new`, because
 /// registration is what binds the stored value and what puts it in the options menu.
@@ -598,13 +615,15 @@ public static class ModSettings
     /// A signature broken into what it names, each paired with whether THIS session currently has
     /// that thing - a loaded mod for a "mod:" entry, a setting at that value for the rest.
     ///
-    /// The pairing is what makes a tooltip on a save worth reading: it is the difference between
-    /// "this save wants three things" and "this save wants three things, and you have two of
-    /// them". The caller decides how to show it; nothing here knows about colours.
+    /// The pairing is what makes a tooltip on a save worth reading: the difference between "this
+    /// save wants three things" and "this save wants three things, one of which you have switched
+    /// off and one of which you do not have at all". The caller decides how to show it; nothing
+    /// here knows about colours.
     /// </summary>
-    public static List<KeyValuePair<string, bool>> Explain(string signature)
+    public static List<KeyValuePair<string, ModContentState>> Explain(string signature)
     {
-        List<KeyValuePair<string, bool>> parts = new List<KeyValuePair<string, bool>>();
+        List<KeyValuePair<string, ModContentState>> parts =
+            new List<KeyValuePair<string, ModContentState>>();
         foreach (string raw in (signature ?? "").Split(';'))
         {
             string part = raw.Trim();
@@ -615,27 +634,52 @@ public static class ModSettings
             if (part.StartsWith("mod:", StringComparison.OrdinalIgnoreCase))
             {
                 string name = part.Substring(4);
-                bool loaded = false;
+                ModContentState state = ModContentState.Missing;
                 foreach (string m in ModLoader.Loaded)
                 {
                     if (string.Equals(m, name, StringComparison.OrdinalIgnoreCase))
                     {
-                        loaded = true;
+                        state = ModContentState.Present;
                         break;
                     }
                 }
-                parts.Add(new KeyValuePair<string, bool>(name + " (mod)", loaded));
+                if (state == ModContentState.Missing)
+                {
+                    // A mod that IS in user/Mods and failed to load is a different problem from one
+                    // that is not there at all: the report names it, and Errors.txt says why.
+                    foreach (string f in ModLoader.Failed)
+                    {
+                        if (f != null && f.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            state = ModContentState.Disabled;
+                            break;
+                        }
+                    }
+                }
+                parts.Add(new KeyValuePair<string, ModContentState>(name + " (mod)", state));
                 continue;
             }
             int eq = part.IndexOf('=');
             string id = eq > 0 ? part.Substring(0, eq) : part;
             string value = eq > 0 ? part.Substring(eq + 1) : "";
             ModSetting known = Find(id);
-            bool active = known != null
-                && string.Equals(known.Value, value.Length > 0 ? value : known.Value, StringComparison.Ordinal);
-            parts.Add(new KeyValuePair<string, bool>(
+            ModContentState settingState;
+            if (known == null)
+            {
+                // Nothing registered this id, so the mod that owns it is not in this build.
+                settingState = ModContentState.Missing;
+            }
+            else if (value.Length == 0 || string.Equals(known.Value, value, StringComparison.Ordinal))
+            {
+                settingState = ModContentState.Present;
+            }
+            else
+            {
+                settingState = ModContentState.Disabled;
+            }
+            parts.Add(new KeyValuePair<string, ModContentState>(
                 (known != null ? known.Label : id) + (value.Length > 0 ? ": " + value : ""),
-                active));
+                settingState));
         }
         return parts;
     }
@@ -651,7 +695,7 @@ public static class ModSettings
             return null;
         }
         List<string> lines = new List<string>();
-        foreach (KeyValuePair<string, bool> part in Explain(signature))
+        foreach (KeyValuePair<string, ModContentState> part in Explain(signature))
         {
             lines.Add(part.Key);
         }

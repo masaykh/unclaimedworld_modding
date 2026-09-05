@@ -2156,7 +2156,7 @@
 +			snapshotHeaders = snapshotHeaders.OrderByDescending((Tuple<string, long, SnapshotHeader> x) => x.Item3.Timestamp).ToList();
 +		}
  		grid.BeginAddingEntries();
-@@ -288,15 +342,90 @@
+@@ -288,15 +342,97 @@
  		Console.WriteLine(sender.Tag1.ToString());
 -		if (File.Exists(text))
 +		if (!File.Exists(text))
@@ -2179,8 +2179,9 @@
 +	}
 +
 +	/// <summary>
-+	/// What a save was made with, one line each, coloured by whether this session HAS that thing:
-+	/// green for a mod that is loaded or a setting already at that value, red for one that is not.
++	/// What a save was made with, one line each, coloured by what this session has: GREEN for a mod
++	/// that is loaded or a setting already at that value, RED for one that is switched off, GREY
++	/// for one that is not installed at all.
 +	///
 +	/// The colour is the whole value of the tooltip. "This save wants three things" is a fact the
 +	/// MODDED tag already conveyed; "and you are missing the second one" is the part that tells a
@@ -2189,19 +2190,25 @@
 +	private static string DescribeSaveMods(string signature)
 +	{
 +		StringBuilder text = new StringBuilder();
-+		foreach (KeyValuePair<string, bool> part in ModSettings.Explain(signature))
++		foreach (KeyValuePair<string, ModContentState> part in ModSettings.Explain(signature))
  		{
 -			SelectedSaveGamePath = text;
 -			if (this.SaveOrLoadClick != null)
-+			if (part.Value)
++			switch (part.Value)
  			{
 -				this.SaveOrLoadClick(this, null);
++			case ModContentState.Present:
 +				Common.AppendPossibleActionText(text, part.Key);
- 			}
-+			else
-+			{
++				break;
++			case ModContentState.Disabled:
 +				Common.AppendImpossibleActionText(text, part.Key);
-+			}
++				break;
++			default:
++				// Grey rather than red, because nothing here can switch this on. Red would send a
++				// player through the options menu looking for something that is not in it.
++				text.Append(Label.ToLabel(part.Key + " - not installed", UIComponent.lcdDisabledColor));
++				break;
+ 			}
 +			text.Append(Environment.NewLine);
  		}
 -		else

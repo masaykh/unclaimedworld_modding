@@ -209,11 +209,25 @@ internal static class Program
         Check(!sim.On, "applying an empty signature returns to stock");
         UWGame.Mods.ModSettings.RestoreAfterSaveApplied();
 
-        // Explain() is what the MODDED tooltip colours by: present or missing, per entry.
-        var explained = UWGame.Mods.ModSettings.Explain("selftest.content=true; mod:NotInstalledMod");
-        Check(explained.Count == 2, "a signature explains one line per thing it names");
-        Check(explained[0].Value, "a setting this session has is marked present");
-        Check(!explained[1].Value, "a mod this session does not have is marked missing");
+        // Explain() is what the MODDED tooltip colours by. Three states, and the middle one is the
+        // reason there are three: "you switched it off" is a checkbox away, "you do not have it"
+        // is not, and telling a player the second when you mean the first sends them looking
+        // through the options menu for something that is not in it.
+        var explained = UWGame.Mods.ModSettings.Explain(
+            "selftest.content=true; selftest.other=true; mod:NotInstalledMod");
+        Check(explained.Count == 3, "a signature explains one line per thing it names");
+        Check(explained[0].Value == UWGame.Mods.ModContentState.Present,
+              "a setting this session has is green");
+        Check(explained[2].Value == UWGame.Mods.ModContentState.Missing,
+              "a mod this session does not have is grey");
+
+        sim.Value = "false";
+        explained = UWGame.Mods.ModSettings.Explain("selftest.content=true");
+        Check(explained[0].Value == UWGame.Mods.ModContentState.Disabled,
+              "a setting this build knows but has switched off is red, not grey");
+        Check(UWGame.Mods.ModSettings.Explain("selftest.notregistered=true")[0].Value
+                  == UWGame.Mods.ModContentState.Missing,
+              "a setting from a mod that is not installed is grey, not red");
 
         Console.WriteLine();
         if (failures == 0)
