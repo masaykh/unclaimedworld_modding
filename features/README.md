@@ -11,23 +11,42 @@ selectable, each attributed to whoever wrote it.
 | `10-mainmenu-fixes` | community modder | EDIT/TEST buttons for the map editor, user scenarios listed, saves sorted newest-first, `en-GB` culture |
 | `20-more-controls` | community modder | `O` toggles shadows, mouse wheel scrolls data sheets |
 | `30-ui-fixes` | community modder | stockpile categories sorted ascending |
-| `40-items-and-recipes` | community modder | `item:peatCharcoal`, `makePeatCharcoal`, both smithies retagged to the `fuelForForge` tag |
-| `50-charcoal-from-peat` | this port | `makeCharcoalFromPeat` — produces **real** `item:charcoal` from dry peat |
+| `40-items-and-recipes` | community modder | both smithies retagged to accept the `fuelForForge` tag rather than `item:charcoal` by key |
+| `50-charcoal-from-peat` | this port | `makeCharcoalFromPeat` — **real** `item:charcoal` from dry peat — and peat-fuelled variants of the three builds that start with a fuel load |
 
 ## Why 40 and 50 are separate
 
-`40-` adds peat charcoal as a **distinct EntityType**, which burns in a forge but is not
-interchangeable with charcoal: gunpowder takes `item:charcoal` as a literal input, and the price
-and trade tables know nothing about peat charcoal. `50-` closes that by producing the real item,
-1:1, and is a separate contribution by a separate author — hence a separate directory.
+`40-` was contributed by a community modder and `50-` written for this port, so they are separate
+directories even though both are about peat.
+
+`40-` originally added peat charcoal as a **distinct EntityType** alongside the retag. That item
+has since been **removed** (2026-09-05): it burned in a forge but could never be made into
+gunpowder or sold, because much of the game matches charcoal by key rather than by tag — and, worse,
+a new EntityType key is named by saves, so a save containing one could not be loaded by a build
+without the mod at all. `50-` produces the **real** item, which closes both problems, so the
+separate item earned nothing and cost save compatibility. What survives in `40-` is the retag.
 
 `50-` **requires** `40-`: it depends on `item:dryPeat` handling and the attainability
 registration. Ordering is by filename prefix, so `40-` always applies first.
 
+## Runtime switches
+
+Since 2026-09-05 the content features are also switchable **without rebuilding**, in
+`user/ModSettings.xml` or the MODS section of the in-game options menu:
+
+| setting | what it controls |
+|---|---|
+| `unhidden.charcoalFromPeat` | the `makeCharcoalFromPeat` recipe (`50-`) |
+| `unhidden.peatBuilding` | the peat-fuelled build variants (`50-`) |
+| `unhidden.experimental` | a spare switch, wired to nothing |
+
+A save records which of these were on when it was written, is marked **MODDED** in the save list,
+and offers to load with the settings it was made with. See the main `README.md`.
+
 ## Save compatibility
 
-`40-` and `50-` add an `EntityType` and `ProcessType` to the tables the snapshot serializer
-resolves against. **A save made with them may not load without them**, and one containing peat
+`50-` adds `ProcessType`s to the tables the snapshot serializer resolves against. **A save made
+with them may not load without them**, and one containing peat
 charcoal certainly will not. `10-`, `20-` and `30-` are interface-only and carry no such risk.
 
 ## Structure
