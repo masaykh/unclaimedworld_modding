@@ -260,15 +260,19 @@ public static class UnhiddenMod
         //
         // Balance:
         //
-        //   makeCharcoalFromPeat  1 dry peat -> 1 charcoal,      1/15 day   (peat route)
+        //   makeCharcoalFromPeat  2 dry peat -> 1 charcoal,      1/15 day   (peat route)
         //   makeCharcoal (stock)  1 firewood -> 1 charcoal,      1/30 day   (firewood route)
         //
-        // 1:1 on purpose, matching the stock firewood conversion, because the cost of this route
-        // is upstream rather than here. Dry peat is not a raw material: it is gathered as WET
-        // peat four at a time from a peat bank (makeWetPeatFromBank) and then dried ten at a
-        // time through a peat stack structure with its own tool set (makeDryPeat, ~0.1 day, and
-        // 1:1 - drying loses nothing). Firewood is one step from a tree. Charging a further
-        // multiple here taxed the same scarcity twice and made the route not worth taking.
+        // 2:1 rather than the stock recipe's 1:1, and the reason is not the work upstream - dry
+        // peat costs plenty of that already, gathered WET four at a time from a bank and dried ten
+        // at a time through a peat stack with its own tool set. It is that a peat bank does not run
+        // out. Firewood is limited by how fast trees grow back, so a colony's charcoal is capped by
+        // its forest; peat is not capped by anything, which makes it the route for STABLE
+        // production rather than the efficient one. Paying twice the input is what keeps it from
+        // being simply better, and the 1/15 day against firewood's 1/30 keeps it slower as well.
+        //
+        // Kastuk asked for this, having played it: "peat reserve is endless, unlike long respawn of
+        // firewood, so its useful for stable production even with less efficiency.
         //
         // What still separates them is time: 1/15 day against the firewood recipe's 1/30, so
         // peat is the slower fallback where trees are scarce - which is what the studio's own
@@ -291,7 +295,7 @@ public static class UnhiddenMod
                     IsConsumed = true,
                     Amount = new InputAmount
                     {
-                        NoOfItems = 1
+                        NoOfItems = 2
                     }
                 }
             },

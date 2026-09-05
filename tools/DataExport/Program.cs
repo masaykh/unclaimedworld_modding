@@ -182,18 +182,38 @@ internal static class Program
               "an unrecognised choice falls back to the default");
 
         // Signature and ApplySignature are what a save is stamped with and matched against.
+        // Signature and ApplySignature are what a save is stamped with and matched against.
         UWGame.Mods.ModSetting sim = UWGame.Mods.ModSettings.Toggle(
             "selftest", "content", "SELF TEST CONTENT", defaultValue: true, toolTip: null,
             affectsSimulation: true);
         Check(UWGame.Mods.ModSettings.Signature().Contains("selftest.content=true"),
               "a setting that is ON is named in the signature even though it is also the default");
+
+        // The player's own choice, which everything below has to come back to.
         sim.Value = "false";
-        Check(UWGame.Mods.ModSettings.Signature() == "",
-              "a stock configuration signs as stock");
+        Check(UWGame.Mods.ModSettings.Signature() == "", "a stock configuration signs as stock");
+
         UWGame.Mods.ModSettings.ApplySignature("selftest.content=true");
-        Check(sim.On, "applying a signature turns its content back on");
+        Check(sim.On, "opening a save applies the content it was made with");
+        Check(UWGame.Mods.ModSettings.SignatureApplied, "the applied state is remembered");
+
+        // Scoped to the session that opened the save: the main menu puts the player's own back.
+        // Without this, opening one modded save would silently change what every later NEW game is
+        // played with.
+        UWGame.Mods.ModSettings.RestoreAfterSaveApplied();
+        Check(!sim.On, "returning to the main menu restores the setting the player had");
+        Check(!UWGame.Mods.ModSettings.SignatureApplied, "and stops claiming a save's settings are in force");
+
+        sim.Value = "true";
         UWGame.Mods.ModSettings.ApplySignature("");
         Check(!sim.On, "applying an empty signature returns to stock");
+        UWGame.Mods.ModSettings.RestoreAfterSaveApplied();
+
+        // Explain() is what the MODDED tooltip colours by: present or missing, per entry.
+        var explained = UWGame.Mods.ModSettings.Explain("selftest.content=true; mod:NotInstalledMod");
+        Check(explained.Count == 2, "a signature explains one line per thing it names");
+        Check(explained[0].Value, "a setting this session has is marked present");
+        Check(!explained[1].Value, "a mod this session does not have is marked missing");
 
         Console.WriteLine();
         if (failures == 0)

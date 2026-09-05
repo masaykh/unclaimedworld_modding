@@ -1,3 +1,16 @@
+--- a/GameStateManagement/MainMenuScreen.cs
++++ b/GameStateManagement/MainMenuScreen.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using Microsoft.Xna.Framework;
+@@ -27,2 +27,6 @@
+ 		this.game = game;
++		// Back at the menu means no game is running, which is where a save's mod settings stop
++		// standing in for the player's own. Applying them is scoped to the session that opened the
++		// save; the file was never rewritten, so this is only putting the in-memory values back.
++		UWGame.Mods.ModSettings.RestoreAfterSaveApplied();
+ 		if (game.GraphicsDeviceManager.GraphicsDevice != null)
 --- a/GameStateManagement/Program.cs
 +++ b/GameStateManagement/Program.cs
 @@ -1,4 +1,4 @@
@@ -2063,15 +2076,16 @@
 -using System;
 +﻿using System;
  using System.Collections.Generic;
-@@ -4,2 +4,3 @@
+@@ -4,2 +4,4 @@
  using System.IO.Compression;
 +using System.Linq;
++using System.Text;
  using GameStateManagement;
-@@ -8,2 +9,3 @@
+@@ -8,2 +10,3 @@
  using UWGame.ClientSide.Interface.LCD;
 +using UWGame.Mods;
  using UWGame.SimSide;
-@@ -51,2 +53,8 @@
+@@ -51,2 +54,8 @@
  
 +	/// <summary>The "this save needs different mods" box, created on first use and then reused.</summary>
 +	private MessageBox modMessageBox;
@@ -2080,7 +2094,7 @@
 +	private string pendingSaveMods;
 +
  	public string SelectedSaveGamePath { get; private set; }
-@@ -82,2 +90,13 @@
+@@ -82,2 +91,13 @@
  		}
 +		// The same warning the version note above gives, for the other thing that can make a save
 +		// unopenable: the modded content it was written with. Stated once, where a player is about
@@ -2094,7 +2108,7 @@
 +				+ ". Saves made with it are marked MODDED and need the same content to load.";
 +		}
  		output = new ErrorsAndMessages(lcdSurface, intf.gui, x, taNote.Bottom);
-@@ -168,3 +187,8 @@
+@@ -168,3 +188,8 @@
  		label3.Y = label2.Bottom + num2;
 -		label3.Text = "Date: " + header.Timestamp.ToString(Config.Culture);
 +		// Was header.Timestamp.ToString(Config.Culture). Config.Culture is not a display setting -
@@ -2104,7 +2118,7 @@
 +		// invariant culture. See PortSettings.SaveDateFormat.
 +		label3.Text = "Date: " + ModSettings.FormatDate(header.Timestamp, PortSettings.SaveDateFormat.Value);
  		Label label4 = new Label(Interface.gui);
-@@ -184,2 +208,21 @@
+@@ -184,2 +209,21 @@
  		lCDInnerPanel3.Panel.X = lCDInnerPanel2.Panel.Right - 2;
 +		// A save carrying modded content says so, in the list, before it is opened. The header is
 +		// all this needs - the save list reads headers only - so marking every save costs one
@@ -2120,19 +2134,19 @@
 +			lblModded.Y = 5;
 +			lblModded.ToolTip = Common.ComposeHeadingAndBlobText(
 +				"Made with modded content",
-+				ModSettings.Describe(header.Mods) +
-+				Environment.NewLine + Environment.NewLine +
++				DescribeSaveMods(header.Mods) +
++				Environment.NewLine +
 +				"Loading it without the same content may fail, because a save names the recipes and " +
 +				"items it contains.");
 +		}
  		TextButton textButton = new TextButton(Interface.gui);
-@@ -193,2 +236,5 @@
+@@ -193,2 +237,5 @@
  		textButton.Tag1 = fullPath;
 +		// The stamp travels with the button so the click handler does not have to open the file
 +		// again to find out what the save needs.
 +		textButton.Tag2 = header.Mods ?? "";
  		if (SaveOrLoadValue == SaveOrLoad.Save)
-@@ -275,2 +321,9 @@
+@@ -275,2 +322,9 @@
  		List<Tuple<string, long, SnapshotHeader>> snapshotHeaders = GetSnapshotHeaders(listOfSavedGamePaths);
 +		// UNHIDDEN MOD: newest save first. The Harmony patch had to replace this whole method
 +		// with a reflection-driven copy to get one sort in; from inside the assembly it is a
@@ -2142,20 +2156,14 @@
 +			snapshotHeaders = snapshotHeaders.OrderByDescending((Tuple<string, long, SnapshotHeader> x) => x.Item3.Timestamp).ToList();
 +		}
  		grid.BeginAddingEntries();
-@@ -288,14 +341,63 @@
+@@ -288,15 +342,90 @@
  		Console.WriteLine(sender.Tag1.ToString());
 -		if (File.Exists(text))
 +		if (!File.Exists(text))
- 		{
--			SelectedSaveGamePath = text;
--			if (this.SaveOrLoadClick != null)
--			{
--				this.SaveOrLoadClick(this, null);
--			}
++		{
 +			output.ShowError("File not found.");
 +			return;
- 		}
--		else
++		}
 +		SelectedSaveGamePath = text;
 +		// A save names the recipes and items it contains, so one made with different modded
 +		// content than this session has may not load at all. Offer to load it with what it was
@@ -2163,22 +2171,52 @@
 +		string saveMods = (sender.Tag2 as string) ?? "";
 +		if (PortSettings.AskAboutModsOnLoad.On
 +			&& !string.Equals(saveMods, ModSettings.EffectiveSignature, StringComparison.Ordinal))
- 		{
--			output.ShowError("File not found.");
++		{
 +			AskAboutModsThenLoad(saveMods);
 +			return;
- 		}
++		}
 +		StartLoad();
++	}
++
++	/// <summary>
++	/// What a save was made with, one line each, coloured by whether this session HAS that thing:
++	/// green for a mod that is loaded or a setting already at that value, red for one that is not.
++	///
++	/// The colour is the whole value of the tooltip. "This save wants three things" is a fact the
++	/// MODDED tag already conveyed; "and you are missing the second one" is the part that tells a
++	/// player whether to expect it to open.
++	/// </summary>
++	private static string DescribeSaveMods(string signature)
++	{
++		StringBuilder text = new StringBuilder();
++		foreach (KeyValuePair<string, bool> part in ModSettings.Explain(signature))
+ 		{
+-			SelectedSaveGamePath = text;
+-			if (this.SaveOrLoadClick != null)
++			if (part.Value)
+ 			{
+-				this.SaveOrLoadClick(this, null);
++				Common.AppendPossibleActionText(text, part.Key);
+ 			}
++			else
++			{
++				Common.AppendImpossibleActionText(text, part.Key);
++			}
++			text.Append(Environment.NewLine);
+ 		}
+-		else
++		return text.ToString();
 +	}
 +
 +	/// <summary>The load the buttons ultimately arrive at, once the mod question is settled.</summary>
 +	private void StartLoad()
 +	{
 +		if (this.SaveOrLoadClick != null)
-+		{
+ 		{
+-			output.ShowError("File not found.");
 +			this.SaveOrLoadClick(this, null);
-+		}
-+	}
+ 		}
+ 	}
 +
 +	/// <summary>
 +	/// The save was made with content this session is not running. Say what the difference is and
@@ -2213,7 +2251,8 @@
 +			"alone. Turn off ASK ABOUT MODS WHEN LOADING in the options to always load with your " +
 +			"own settings instead.",
 +			"DIFFERENT MODS", modal: true, MessageBox.ButtonOptions.OKAndCancel);
- 	}
++	}
+ 
 --- a/UWGame/ClientSide/MainMenu/Intro/IntroVideoScreen.cs
 +++ b/UWGame/ClientSide/MainMenu/Intro/IntroVideoScreen.cs
 @@ -6,4 +6,4 @@

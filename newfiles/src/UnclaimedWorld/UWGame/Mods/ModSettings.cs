@@ -477,6 +477,36 @@ public static class ModSettings
         DataSignature = null;
     }
 
+    /// <summary>What the player had before a save's settings were applied over them, or null.</summary>
+    private static Dictionary<string, string> appliedFromSave;
+
+    /// <summary>Whether a save's settings are currently standing in for the player's own.</summary>
+    public static bool SignatureApplied => appliedFromSave != null;
+
+    /// <summary>
+    /// Puts the player's own settings back after a save was opened with different ones. Called
+    /// when the main menu appears, which is the moment no game is running any more.
+    ///
+    /// NOT when the data tables are unloaded, which is the more obvious place and is wrong: an
+    /// in-game load of a save needing different content unloads the tables on its way through, and
+    /// restoring there would undo the settings a moment before they were used to rebuild them.
+    /// </summary>
+    public static void RestoreAfterSaveApplied()
+    {
+        if (appliedFromSave == null)
+        {
+            return;
+        }
+        foreach (ModSetting s in registered)
+        {
+            if (s.AffectsSimulation && appliedFromSave.TryGetValue(s.Id, out string v))
+            {
+                s.Value = v;
+            }
+        }
+        appliedFromSave = null;
+    }
+
     /// <summary>
     /// What the running session's content is, for comparing a save against: what the tables were
     /// built with if there are tables, and what is currently switched on if there are not.
@@ -524,6 +554,21 @@ public static class ModSettings
     /// </summary>
     public static void ApplySignature(string signature)
     {
+        // Remember what the player had, once. A second apply in the same session - two mismatched
+        // saves opened in a row - must not overwrite the stash with the first save's values, or
+        // returning to the main menu would restore the wrong thing.
+        if (appliedFromSave == null)
+        {
+            appliedFromSave = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (ModSetting s in registered)
+            {
+                if (s.AffectsSimulation)
+                {
+                    appliedFromSave[s.Id] = s.Value;
+                }
+            }
+        }
+
         Dictionary<string, string> wanted = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (string raw in (signature ?? "").Split(';'))
         {
@@ -550,6 +595,52 @@ public static class ModSettings
     }
 
     /// <summary>
+    /// A signature broken into what it names, each paired with whether THIS session currently has
+    /// that thing - a loaded mod for a "mod:" entry, a setting at that value for the rest.
+    ///
+    /// The pairing is what makes a tooltip on a save worth reading: it is the difference between
+    /// "this save wants three things" and "this save wants three things, and you have two of
+    /// them". The caller decides how to show it; nothing here knows about colours.
+    /// </summary>
+    public static List<KeyValuePair<string, bool>> Explain(string signature)
+    {
+        List<KeyValuePair<string, bool>> parts = new List<KeyValuePair<string, bool>>();
+        foreach (string raw in (signature ?? "").Split(';'))
+        {
+            string part = raw.Trim();
+            if (part.Length == 0)
+            {
+                continue;
+            }
+            if (part.StartsWith("mod:", StringComparison.OrdinalIgnoreCase))
+            {
+                string name = part.Substring(4);
+                bool loaded = false;
+                foreach (string m in ModLoader.Loaded)
+                {
+                    if (string.Equals(m, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        loaded = true;
+                        break;
+                    }
+                }
+                parts.Add(new KeyValuePair<string, bool>(name + " (mod)", loaded));
+                continue;
+            }
+            int eq = part.IndexOf('=');
+            string id = eq > 0 ? part.Substring(0, eq) : part;
+            string value = eq > 0 ? part.Substring(eq + 1) : "";
+            ModSetting known = Find(id);
+            bool active = known != null
+                && string.Equals(known.Value, value.Length > 0 ? value : known.Value, StringComparison.Ordinal);
+            parts.Add(new KeyValuePair<string, bool>(
+                (known != null ? known.Label : id) + (value.Length > 0 ? ": " + value : ""),
+                active));
+        }
+        return parts;
+    }
+
+    /// <summary>
     /// The mods named by a signature, one per line, for showing a player what a save needs.
     /// Returns null for a signature that describes nothing modded.
     /// </summary>
@@ -560,24 +651,9 @@ public static class ModSettings
             return null;
         }
         List<string> lines = new List<string>();
-        foreach (string raw in signature.Split(';'))
+        foreach (KeyValuePair<string, bool> part in Explain(signature))
         {
-            string part = raw.Trim();
-            if (part.Length == 0)
-            {
-                continue;
-            }
-            if (part.StartsWith("mod:", StringComparison.OrdinalIgnoreCase))
-            {
-                lines.Add(part.Substring(4) + " (mod)");
-                continue;
-            }
-            int eq = part.IndexOf('=');
-            string id = eq > 0 ? part.Substring(0, eq) : part;
-            string value = eq > 0 ? part.Substring(eq + 1) : "";
-            ModSetting known = Find(id);
-            lines.Add((known != null ? known.Label : id) +
-                      (value.Length > 0 ? ": " + value : ""));
+            lines.Add(part.Key);
         }
         return lines.Count > 0 ? string.Join(Environment.NewLine, lines) : null;
     }
@@ -595,6 +671,7 @@ public static class ModSettings
         storedOrder.Clear();
         loaded = false;
         DataSignature = null;
+        appliedFromSave = null;
     }
 
     /// <summary>
