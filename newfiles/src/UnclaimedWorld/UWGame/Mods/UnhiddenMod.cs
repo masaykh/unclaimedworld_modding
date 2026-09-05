@@ -94,6 +94,8 @@ public static class UnhiddenMod
 
     private static ModSetting charcoalFromPeat;
 
+    private static ModSetting peatBuilding;
+
     private static ModSetting experimental;
 
     /// <summary>
@@ -107,6 +109,21 @@ public static class UnhiddenMod
                      "where trees are scarce. Off gives the stock game's firewood route only. " +
                      "Changes what a save contains: a save made with this on names a recipe a " +
                      "build without it does not have.",
+            affectsSimulation: true, takesEffectOnNextLoad: true));
+
+    /// <summary>
+    /// Whether peat can stand in for the firewood a campfire or a primitive kitchen is built with.
+    ///
+    /// Separate from the charcoal recipe because it is a separate thing to want, and because each
+    /// switch that adds a ProcessType key is a thing a save can name - so they are listed
+    /// separately in a save's stamp rather than lumped together.
+    /// </summary>
+    public static ModSetting PeatBuilding =>
+        peatBuilding ?? (peatBuilding = ModSettings.Toggle(
+            ModId, "peatBuilding", "BUILD WITH PEAT", defaultValue: true,
+            toolTip: "Lets a campfire, an improvised kitchen and a mudbrick kitchen be built with " +
+                     "dry peat instead of firewood. The fuel is not spent building them - it is " +
+                     "the load they start with - so peat works as well as a log does.",
             affectsSimulation: true, takesEffectOnNextLoad: true));
 
     /// <summary>
@@ -134,6 +151,7 @@ public static class UnhiddenMod
     public static void RegisterSettings()
     {
         _ = CharcoalFromPeat;
+        _ = PeatBuilding;
         _ = Experimental;
     }
 
@@ -240,6 +258,8 @@ public static class UnhiddenMod
     /// </summary>
     public static void AddProcesses(List<ProcessType> listOfProcessTypes)
     {
+        AddPeatConstruction(listOfProcessTypes);
+
         if (!CharcoalFromPeat.On)
         {
             return;
@@ -322,6 +342,132 @@ public static class UnhiddenMod
     }
 
     /// <summary>
+    /// The stock recipes that hand a structure its first load of fuel, and which name firewood by
+    /// key to do it.
+    /// </summary>
+    private static readonly string[] FirewoodFuelledBuilds = new string[3]
+    {
+        "constructCampfire", "constructImprovisedKitchen", "constructMudbrickKitchen"
+    };
+
+    /// <summary>The peat variants added by <see cref="AddPeatConstruction"/>, for attainability.</summary>
+    private static readonly List<ProcessType> peatBuilds = new List<ProcessType>();
+
+    /// <summary>
+    /// Adds a peat-fuelled variant of each build in <see cref="FirewoodFuelledBuilds"/>.
+    ///
+    /// WHY THESE THREE AND NOT A GENERAL RULE. In all three the firewood is not a material at all:
+    /// it is consumed by the recipe and re-created as a waste product, which is the game's way of
+    /// saying "the structure starts with one fuel in it". Every one of these structures burns the
+    /// fuelForCampfire tag, and dry peat carries that tag with the same MaximumBulk as firewood -
+    /// so a peat-loaded campfire burns exactly as long as a firewood-loaded one, and the variant
+    /// is a fair swap rather than a discount. Nothing else in the stock tables has that shape.
+    ///
+    /// WHY 1 PEAT AND NOT 2, when the charcoal recipe charges two. There the peat is consumed and
+    /// something else comes out; here the input IS the output. Charging two would burn a peat for
+    /// nothing and read as a bug to anyone who looked at the numbers.
+    ///
+    /// WHY A CLONE RATHER THAN THREE COPIES OF THE STUDIO'S DATA. Their recipes carry tools, a
+    /// skill, a work time, stances and animations, and the port has no business restating any of
+    /// it - a restated copy is a copy that goes stale the next time the studio changes a number.
+    /// The one field that differs is which item fills the fuel slot.
+    /// </summary>
+    private static void AddPeatConstruction(List<ProcessType> listOfProcessTypes)
+    {
+        peatBuilds.Clear();
+        if (!PeatBuilding.On)
+        {
+            return;
+        }
+
+        foreach (string key in FirewoodFuelledBuilds)
+        {
+            ProcessType stock = listOfProcessTypes.Find(
+                (ProcessType p) => p != null && p.KeyName == key && !p.DeleteRecord);
+            if (stock == null || stock.Inputs == null || stock.Outputs == null)
+            {
+                // A scenario that deletes the recipe, or a game update that renamed it. Skipping is
+                // right either way: a variant of a recipe that is not there would be a recipe the
+                // scenario's designer removed, put back by the side door.
+                continue;
+            }
+
+            Input[] inputs = SwapFirewoodForPeat(stock.Inputs);
+            Output[] outputs = SwapFirewoodForPeat(stock.Outputs);
+            if (inputs == null || outputs == null)
+            {
+                // No firewood in it after all - somebody else already changed this recipe. Leave it.
+                continue;
+            }
+
+            ProcessType peat = new ProcessType(stock, key + "WithPeat", null)
+            {
+                Inputs = inputs,
+                Outputs = outputs
+            };
+            listOfProcessTypes.Add(peat);
+            peatBuilds.Add(peat);
+        }
+    }
+
+    /// <summary>
+    /// A copy of the inputs with firewood replaced by dry peat, or null if there was no firewood.
+    /// Every element is copied rather than shared: the loader initialises these objects in place,
+    /// and an object reachable from two ProcessTypes would be initialised twice.
+    /// </summary>
+    private static Input[] SwapFirewoodForPeat(Input[] original)
+    {
+        bool found = false;
+        Input[] copy = new Input[original.Length];
+        for (int i = 0; i < original.Length; i++)
+        {
+            Input from = original[i];
+            bool isFirewood = from.Entity == "item:firewood";
+            found |= isFirewood;
+            copy[i] = new Input
+            {
+                Entity = isFirewood ? "item:dryPeat" : from.Entity,
+                Tag = from.Tag,
+                IsConsumed = from.IsConsumed,
+                BecomesPartOfProduct = from.BecomesPartOfProduct,
+                Amount = new InputAmount
+                {
+                    NoOfItems = from.Amount?.NoOfItems,
+                    Substances = from.Amount?.Substances
+                }
+            };
+        }
+        return found ? copy : null;
+    }
+
+    /// <summary>The same for the outputs - the fuel the structure is handed when it is finished.</summary>
+    private static Output[] SwapFirewoodForPeat(Output[] original)
+    {
+        bool found = false;
+        Output[] copy = new Output[original.Length];
+        for (int i = 0; i < original.Length; i++)
+        {
+            Output from = original[i];
+            bool isFirewood = from.EntityTypeToCreate == "item:firewood";
+            found |= isFirewood;
+            copy[i] = new Output
+            {
+                EntityTypeToCreate = isFirewood ? "item:dryPeat" : from.EntityTypeToCreate,
+                IsWasteProduct = from.IsWasteProduct,
+                RelativePlacement = from.RelativePlacement,
+                ToolContainerTagsToPlaceIn = from.ToolContainerTagsToPlaceIn,
+                ToolContainerTypesToPlaceIn = from.ToolContainerTypesToPlaceIn,
+                Amount = new OutputAmount
+                {
+                    NoOfItems = from.Amount?.NoOfItems,
+                    Bulk = from.Amount?.Bulk
+                }
+            };
+        }
+        return found ? copy : null;
+    }
+
+    /// <summary>
     /// Called at the end of InventorySettings.EndRecomputeAttainability. Without this the new
     /// recipe works but is never offered, because attainability was computed from the tables as
     /// they stood before the addition.
@@ -338,6 +484,23 @@ public static class UnhiddenMod
             if (!charcoalRoutes.ContainsKey(makeCharcoalFromPeat))
             {
                 charcoalRoutes.Add(makeCharcoalFromPeat, Producable);
+            }
+        }
+
+        // Same again for the peat-fuelled builds: the structures already have an entry, from the
+        // stock recipe, and this adds the alternative route into it.
+        foreach (ProcessType build in peatBuilds)
+        {
+            if (build.Outputs == null || build.Outputs.Length == 0)
+            {
+                continue;
+            }
+            EntityType structureType = build.Outputs[0].FinalEntityTypeToCreate;
+            if (structureType != null
+                && attainableInfo.TryGetValue(structureType, out Dictionary<ProcessType, AttainableInfo> routes)
+                && !routes.ContainsKey(build))
+            {
+                routes.Add(build, Producable);
             }
         }
     }

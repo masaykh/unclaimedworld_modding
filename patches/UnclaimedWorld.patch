@@ -2589,6 +2589,85 @@
 +		// every path the game itself takes.
 +		The.LoadScreen?.Progress(nextStep.ToString(), (int)((float)lengthOfNextStepInMilliseconds * progressFactor));
  		queueState = nextStep;
+--- a/UWGame/SimSide/Buildings/Structure.cs
++++ b/UWGame/SimSide/Buildings/Structure.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
+@@ -231,3 +231,3 @@
+ 		}
+-		ProcessJob processJob = new ProcessJob(null, value[0], Parent.EntityType, ownerOfBuilding);
++		ProcessJob processJob = new ProcessJob(null, ChooseBuildProcess(value, ownerOfBuilding), Parent.EntityType, ownerOfBuilding);
+ 		processJob.BuildingJob = new BuildingJob(processJob);
+@@ -243,2 +243,67 @@
+ 	}
++
++	/// <summary>
++	/// Which recipe to build this structure with, when more than one produces it.
++	///
++	/// This was <c>value[0]</c>: the first recipe registered, always, whatever the colony had in
++	/// store. No structure in the stock tables has a second recipe, so nothing ever noticed - and
++	/// nothing changes for them here either, because with one candidate this returns that one.
++	///
++	/// It matters the moment a mod adds an alternative. A campfire that can be built with firewood
++	/// OR peat has two recipes, and picking the first regardless means the second can never be
++	/// used: the job is ordered against a recipe whose material nobody has, and the haulers wait
++	/// for firewood while the peat sits in the stockpile.
++	///
++	/// So: the first candidate the owner can actually supply, and the original first candidate
++	/// when they can supply none of them - which is the existing behaviour of ordering the build
++	/// and waiting for the materials to arrive.
++	///
++	/// The order of the list is the order the recipes were registered, so the stock recipe is
++	/// tried before anything a mod added. A mod's alternative is a fallback, never a substitute.
++	/// </summary>
++	private static ProcessType ChooseBuildProcess(List<ProcessType> candidates, EntityGroup ownerOfBuilding)
++	{
++		if (candidates.Count == 1)
++		{
++			return candidates[0];
++		}
++		foreach (ProcessType candidate in candidates)
++		{
++			if (OwnerCanSupply(candidate, ownerOfBuilding))
++			{
++				return candidate;
++			}
++		}
++		return candidates[0];
++	}
++
++	/// <summary>
++	/// Whether the owner has every input this recipe names, in the amount it names.
++	///
++	/// CountAvailableItems is the game's own notion of "have": it excludes items that are
++	/// unfinished, on another site, part of something else, or owned by somebody else. Using it
++	/// rather than a raw count of the item list is what keeps this from choosing a recipe whose
++	/// materials are visible but unusable.
++	/// </summary>
++	private static bool OwnerCanSupply(ProcessType process, EntityGroup ownerOfBuilding)
++	{
++		if (process.Inputs == null)
++		{
++			return true;
++		}
++		Input[] inputs = process.Inputs;
++		foreach (Input input in inputs)
++		{
++			if (input.EntityType == null)
++			{
++				continue;
++			}
++			int needed = ((input.Amount != null && input.Amount.NoOfItems.HasValue) ? input.Amount.NoOfItems.Value : 1);
++			if (ownerOfBuilding.CountAvailableItems(input.EntityType) < needed)
++			{
++				return false;
++			}
++		}
++		return true;
++	}
+ 
 --- a/UWGame/SimSide/CustomXmlSerializer.cs
 +++ b/UWGame/SimSide/CustomXmlSerializer.cs
 @@ -1,7 +1,4 @@
