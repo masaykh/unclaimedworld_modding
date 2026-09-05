@@ -10,8 +10,8 @@ permission. So nothing of theirs is distributed here. What you get is the **diff
 
 | | |
 |---|---|
-| `patches/` | 32 files' worth of changes: **+747 lines of our code**, 265 lines of context |
-| `newfiles/` | 11 source files written from scratch |
+| `patches/` | 38 files' worth of changes: **+1,276 lines of our code**, 341 lines of context |
+| `newfiles/` | 13 source files written from scratch |
 | `projects/` | the `.csproj` / props files (the studio's VS2013 projects never shipped) |
 | `tools/` | our own tools: shader transcoder, content probe, data exporter, proxy generator |
 | `orchestrator/` | `uwkit` - the Go source for the single-binary build orchestrator |
