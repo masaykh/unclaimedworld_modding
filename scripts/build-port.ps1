@@ -1,4 +1,4 @@
-# The build engine: turns YOUR copy of the game plus this kit's patches into the ported game.
+﻿# The build engine: turns YOUR copy of the game plus this kit's patches into the ported game.
 # Called by setup-port.ps1; runnable on its own for debugging.
 #
 # Nine steps, in order:
@@ -206,34 +206,6 @@ foreach ($asm in $Map.Keys) {
     }
 }
 
-# ---- community patches ---------------------------------------------------------------------
-#
-# patches\extra\ is the lane for patches this kit did not ship with. Anyone can drop a .patch in
-# and it is applied after the core series, in filename order - so prefix them (10-, 20-) when
-# order matters. This is what makes the kit extensible without a new release: a modder writes a
-# diff against the decompiled source, and it composes with everything else.
-#
-# Paths inside an extra patch are project-relative, same as the core series, so the file needs
-# to say which project it targets. The convention is a folder per project:
-#     patches\extra\UnclaimedWorld\10-my-change.patch
-$extraRoot = Join-Path $Here 'patches\extra'
-if (Test-Path $extraRoot) {
-    foreach ($asm in $Map.Keys) {
-        $dir = Join-Path $extraRoot $asm
-        if (-not (Test-Path $dir)) { continue }
-        $projDir = Join-Path $Src $Map[$asm]
-        Get-ChildItem $dir -Filter *.patch | Sort-Object Name | ForEach-Object {
-            $r = Invoke-UnifiedPatch -PatchFile $_.FullName -Root $projDir
-            if ($r.Problems.Count) {
-                $r.Problems | Select-Object -First 3 | ForEach-Object { Write-Host "      $_" -ForegroundColor Red }
-                # A third-party patch failing must not be mistaken for the kit being broken.
-                Die "community patch $($_.Name) did not apply. It was not shipped with this kit - remove it from patches\extra\ to build without it."
-            }
-            Ok "extra: $($_.Name) ($($r.Files) file(s))"
-        }
-    }
-}
-
 # ---------------------------------------------------------------- 4. our files + build system
 Step 'Adding the port''s own files'
 $nf = Join-Path $Here 'newfiles'
@@ -258,6 +230,68 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Work '.config') | Out-Null
 Copy-Item (Join-Path $Here '.config\dotnet-tools.json') (Join-Path $Work '.config\') -Force
 if (Test-Path (Join-Path $Here 'tools')) { Copy-Item (Join-Path $Here 'tools') $Work -Recurse -Force }
 Ok 'build system in place'
+# ---- community files --------------------------------------------------------------------------
+#
+# newfiles\extra\src\<Project>\... is the same lane for whole files rather than diffs. A mod that
+# is a new .cs file has nothing to diff against, and expressing "add this file" as a unified diff
+# against nothing works in GNU patch but not in the minimal applier this kit ships - and dropping
+# the file in is what everybody tries first anyway.
+#
+# Copied BEFORE the extra patches would be a mistake and after them is deliberate only in the
+# other direction: a patch may target a file this lane provides, so the files land first.
+$extraFiles = Join-Path $Here 'newfiles\extra\src'
+if (Test-Path $extraFiles) {
+    Step 'Adding community files'
+    $n = 0
+    Get-ChildItem $extraFiles -Recurse -File | ForEach-Object {
+        $rel  = $_.FullName.Substring((Join-Path $extraFiles '').Length)
+        $dest = Join-Path $Src (Join-Path 'src' $rel)
+        New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+        Copy-Item $_.FullName $dest -Force
+        $n++
+    }
+    Ok "$n community file(s)"
+}
+
+# ---- community patches ----------------------------------------------------------------------
+#
+# patches\extra\ is the lane for changes this kit did not ship with. Anyone can drop a .patch in
+# and it is applied in filename order - so prefix them (10-, 20-) when order matters. This is what
+# makes the kit extensible without a new release: write a diff against the tree and it composes
+# with everything else.
+#
+# IT RUNS HERE, AFTER STEP 4, AND THAT IS THE POINT. It used to run at the end of step 3, with the
+# kit's own series - which meant it could only touch files that came out of the DECOMPILE, because
+# step 4 then copied newfiles\ over the tree with -Force. A patch against one of the port's own
+# files - anything under UWGame\Mods\, say - reported "applied" and was overwritten a step later
+# without a word. On a clean work\ the same patch failed the opposite way, "missing target",
+# because the file was not there yet. Both are the same bug seen from either side of a stale tree,
+# and both are answered by patching after the tree is complete.
+#
+# The kit's OWN series still runs in step 3: it has to land on the pristine decompile.
+#
+# Paths inside an extra patch are project-relative, same as the core series, so the file needs to
+# say which project it targets. The convention is a folder per project:
+#     patches\extra\UnclaimedWorld\10-my-change.patch
+$extraRoot = Join-Path $Here 'patches\extra'
+if (Test-Path $extraRoot) {
+    Step 'Applying community patches'
+    foreach ($asm in $Map.Keys) {
+        $dir = Join-Path $extraRoot $asm
+        if (-not (Test-Path $dir)) { continue }
+        $projDir = Join-Path $Src $Map[$asm]
+        Get-ChildItem $dir -Filter *.patch | Sort-Object Name | ForEach-Object {
+            $r = Invoke-UnifiedPatch -PatchFile $_.FullName -Root $projDir
+            if ($r.Problems.Count) {
+                $r.Problems | Select-Object -First 3 | ForEach-Object { Write-Host "      $_" -ForegroundColor Red }
+                # A third-party patch failing must not be mistaken for the kit being broken.
+                Die "community patch $($_.Name) did not apply. It was not shipped with this kit - remove it from patches\extra\ to build without it."
+            }
+            Ok "extra: $($_.Name) ($($r.Files) file(s))"
+        }
+    }
+}
+
 
 # ---------------------------------------------------------------- 5. XML proxies
 #

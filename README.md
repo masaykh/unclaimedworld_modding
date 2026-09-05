@@ -140,12 +140,29 @@ from you.
 
 ## Contributing patches
 
-`patches/extra/<Project>/*.patch` is the lane for patches this kit did not ship with. They are
-applied after the kit's own series, in filename order — prefix them (`10-`, `20-`) when order
-matters. Generate one with `diff -U1` against the decompiled tree in `work/src/<Project>/`.
+Two lanes, and which one you want depends on whether you are changing a file or adding one.
 
-A patch there that fails to apply stops the build and names itself, so a broken third-party patch
-is never mistaken for the kit being broken.
+**`newfiles/extra/src/<Project>/...`** — whole files. A mod that is a new `.cs` file goes here,
+laid out the way `newfiles/` is. Nothing to diff against, nothing to keep in step with a game
+version.
 
-That is what makes this extensible without a release: write a diff against the decompiled source
-and it composes with everything else.
+**`patches/extra/<Project>/*.patch`** — changes to a file that already exists. Applied in
+filename order, so prefix them (`10-`, `20-`) when order matters. Generate one with `diff -U1`
+against the tree in `work/src/<Project>/`.
+
+Both run **after** the kit's own patch series and after `newfiles/` has been copied in — so an
+extra patch can target the port's own files (`UWGame/Mods/...`) and not only the decompiled ones.
+That ordering was the other way round until it was found to matter: a patch against a port file
+reported *applied* and was then overwritten by the `newfiles/` copy, silently, and on a clean
+`work/` the same patch failed with *missing target* instead. If you hit either symptom on an older
+kit, that is what it was.
+
+A patch that fails to apply stops the build and names itself, so a broken third-party patch is
+never mistaken for the kit being broken.
+
+That is what makes this extensible without a release: drop in a file, or write a diff, and it
+composes with everything else.
+
+**If you have the repository rather than the kit, do not hand-write patches at all.** Edit `src/`
+and open a PR; `build/90-make-patch-kit.sh` regenerates the entire series from the difference
+against `decomp/`. The `extra` lanes exist for people who have this kit and not the source.

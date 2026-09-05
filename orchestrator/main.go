@@ -103,7 +103,7 @@ func run(o *opts) error {
 	if !confirm(o, "Decompile your game and build the port?") {
 		return fmt.Errorf("declined")
 	}
-	for _, f := range []func(*opts) error{decompile, layout, applyPatches, addOurFiles, genProxies, build, stage, shaders, animation, assets, steamNative} {
+	for _, f := range []func(*opts) error{decompile, layout, applyPatches, addOurFiles, addCommunityFiles, applyCommunityPatches, genProxies, build, stage, shaders, animation, assets, steamNative} {
 		if err := f(o); err != nil {
 			return err
 		}
@@ -357,27 +357,81 @@ func applyPatches(o *opts) error {
 				ok(fmt.Sprintf("%s: %d file(s) removed", m.Asm, removed))
 			}
 		}
-		// patches\extra\<Project>\*.patch - the lane for patches this kit did not ship with.
-		// Applied after the core series in filename order, so prefix them when order matters.
-		extra := filepath.Join(o.here, "patches", "extra", m.Asm)
-		if ents, err := os.ReadDir(extra); err == nil {
-			names := []string{}
-			for _, e := range ents {
-				if strings.HasSuffix(e.Name(), ".patch") {
-					names = append(names, e.Name())
-				}
+	}
+	return nil
+}
+
+// Whole files contributed by someone other than this kit: newfiles\extra\src\<Project>\...
+//
+// A mod that is a new .cs file has nothing to diff against, and expressing "add this file" as a
+// unified diff against nothing works in GNU patch but not in the minimal applier here.
+func addCommunityFiles(o *opts) error {
+	root := filepath.Join(o.here, "newfiles", "extra", "src")
+	if _, err := os.Stat(root); err != nil {
+		return nil
+	}
+	step("Adding community files")
+	n := 0
+	filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
+		if err != nil || fi.IsDir() {
+			return nil
+		}
+		rel := strings.TrimPrefix(strings.TrimPrefix(p, root), `\`)
+		dest := filepath.Join(o.work, "src", rel)
+		os.MkdirAll(filepath.Dir(dest), 0o755)
+		b, _ := os.ReadFile(p)
+		os.WriteFile(dest, b, 0o644)
+		n++
+		return nil
+	})
+	ok(fmt.Sprintf("%d community file(s)", n))
+	return nil
+}
+
+// patches\extra\<Project>\*.patch - the lane for changes this kit did not ship with, applied in
+// filename order, so prefix them (10-, 20-) when order matters.
+//
+// IT RUNS AFTER addOurFiles, AND THAT IS THE POINT. It used to run at the end of applyPatches,
+// with the kit's own series - which meant it could only touch files that came out of the
+// DECOMPILE, because addOurFiles then wrote newfiles\ over the tree. A patch against one of the
+// port's own files - anything under UWGame\Mods\, say - reported "applied" and was overwritten a
+// step later without a word; on a clean tree the same patch failed the opposite way, "missing
+// target", because the file was not there yet. Both are the same bug seen from either side of a
+// stale tree. The kit's own series still runs before all of this: it has to land on the pristine
+// decompile.
+func applyCommunityPatches(o *opts) error {
+	root := filepath.Join(o.here, "patches", "extra")
+	if _, err := os.Stat(root); err != nil {
+		return nil
+	}
+	started := false
+	for _, m := range mappings {
+		proj := filepath.Join(o.work, m.Proj)
+		extra := filepath.Join(root, m.Asm)
+		ents, err := os.ReadDir(extra)
+		if err != nil {
+			continue
+		}
+		names := []string{}
+		for _, e := range ents {
+			if strings.HasSuffix(e.Name(), ".patch") {
+				names = append(names, e.Name())
 			}
-			sort.Strings(names)
-			for _, nm := range names {
-				n, probs := applyUnified(filepath.Join(extra, nm), proj)
-				if len(probs) > 0 {
-					for _, s := range probs[:min(3, len(probs))] {
-						fmt.Println("       " + s)
-					}
-					return fmt.Errorf("community patch %s did not apply. It was not shipped with this kit - remove it from patches\\extra to build without it", nm)
+		}
+		sort.Strings(names)
+		if len(names) > 0 && !started {
+			step("Applying community patches")
+			started = true
+		}
+		for _, nm := range names {
+			n, probs := applyUnified(filepath.Join(extra, nm), proj)
+			if len(probs) > 0 {
+				for _, s := range probs[:min(3, len(probs))] {
+					fmt.Println("       " + s)
 				}
-				ok(fmt.Sprintf("extra: %s (%d file(s))", nm, n))
+				return fmt.Errorf("community patch %s did not apply. It was not shipped with this kit - remove it from patches\\extra to build without it", nm)
 			}
+			ok(fmt.Sprintf("extra: %s (%d file(s))", nm, n))
 		}
 	}
 	return nil
