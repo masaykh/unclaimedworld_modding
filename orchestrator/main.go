@@ -92,6 +92,7 @@ func main() {
 }
 
 func run(o *opts) error {
+	printKitVersion(o)
 	if err := checkPrereqs(o); err != nil {
 		return err
 	}
@@ -112,6 +113,23 @@ func run(o *opts) error {
 	ok("run the port with: " + filepath.Join(o.out, "UnclaimedWorld.exe"))
 	fmt.Println("       Your game folder was not modified.")
 	return nil
+}
+
+// Which kit this is, before anything else, so that a pasted build log identifies itself. A report
+// that does not say which version it came from costs a round trip to find out, and the answer has
+// already mattered once: a kit whose newfiles/ and patches/ had come from different versions,
+// which a log saying "8 new source file(s)" does not reveal unless you know 13 is the number.
+func printKitVersion(o *opts) {
+	b, err := os.ReadFile(filepath.Join(o.here, "kit-version.txt"))
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			fmt.Println("       kit " + line)
+		}
+	}
 }
 
 // ---------------------------------------------------------------- 1. prerequisites

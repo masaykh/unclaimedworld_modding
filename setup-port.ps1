@@ -1,4 +1,4 @@
-# Unclaimed World .NET 8 port - self-contained setup and build kit.
+﻿# Unclaimed World .NET 8 port - self-contained setup and build kit.
 #
 #   powershell -ExecutionPolicy Bypass -File setup-port.ps1              interactive
 #   powershell -ExecutionPolicy Bypass -File setup-port.ps1 -CheckOnly   report and change nothing
@@ -391,11 +391,26 @@ function Invoke-Build {
         return $false
     }
 
+    $stamp = Join-Path $Work 'build-succeeded.stamp'
+    Remove-Item $stamp -Force -ErrorAction SilentlyContinue
+
+    # Out-Host, not a bare call: anything the child script leaves in the pipeline would otherwise
+    # become part of THIS function's return value, and `if (-not (Invoke-Build))` on an array is
+    # false however the build went. That is how a failed build was followed by "Done".
     & $decompile -Here $Here -Game $script:GameDir -Work $Work -Out $OutDir `
         -Harmony $Harmony -UnhiddenMod $UnhiddenMod `
         -MenuAnimation $(if ($script:MenuAnimationPossible -eq $false) { 'no' } else { $MenuAnimation }) `
-        -Ffmpeg (Get-FfmpegPath)
-    return ($LASTEXITCODE -eq 0)
+        -Ffmpeg (Get-FfmpegPath) | Out-Host
+    $code = $LASTEXITCODE
+
+    # Two independent answers, because an exit code from a .ps1 called with & is easy to lose and
+    # the consequence of losing it is a "Done" over an empty port folder.
+    if (-not (Test-Path $stamp)) {
+        Bad 'the build did not finish - see the messages above'
+        Say "        the full compiler output is under $(Join-Path $Work 'logs')"
+        return $false
+    }
+    return ($code -eq 0)
 }
 
 # ---------------------------------------------------------------- main

@@ -39,10 +39,68 @@ function Ok   ($m) { Write-Host "    [ok]   $m" -ForegroundColor Green }
 function Warn ($m) { Write-Host "    [warn] $m" -ForegroundColor Yellow }
 function Die  ($m) { Write-Host "    [--]   $m" -ForegroundColor Red; exit 1 }
 
+# Every dotnet invocation goes through this, and the reason is a bug report we could not act on:
+# a build failed for a modder and all he had - all ANYONE had - was
+#
+#     [--]   phase-1 build failed
+#
+# The compiler had already said exactly what was wrong. The message went nowhere because the
+# output was neither kept nor shown, and the run then carried on to the end and printed "Done"
+# over a port folder with no game in it. So: keep the output, show the lines that name an error,
+# and say where the rest is.
+#
+# stdout only. Redirecting a native command's stderr with 2>&1 in Windows PowerShell wraps every
+# line in an ErrorRecord and sets $? to false even on success, so stderr is left to flow straight
+# to the console instead - visible live, just not in the log. MSBuild writes its errors to stdout,
+# which is the case that matters here.
+#
+# Out-Host at the end is not decoration: without it, anything the command emits becomes part of
+# THIS function's return value, and a caller testing that return value gets an array instead of a
+# boolean. That is how the "Done" above got printed after a failed build.
+function Invoke-Dotnet ($What, $LogName, [string[]]$DotnetArgs) {
+    $logDir = Join-Path $Work 'logs'
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    $log = Join-Path $logDir "$LogName.log"
+    & $Dotnet @DotnetArgs | Tee-Object -FilePath $log | Out-Host
+    if ($LASTEXITCODE -eq 0) { return }
+
+    $lines = @()
+    if (Test-Path $log) {
+        $lines = @(Get-Content $log |
+            Where-Object { $_ -match '(: error |error CS\d+|error MSB\d+|MSB\d{4}:|Unhandled exception)' } |
+            Select-Object -Unique -First 12)
+    }
+    if ($lines.Count) {
+        Write-Host '    what the build said:' -ForegroundColor Red
+        foreach ($l in $lines) { Write-Host "      $($l.Trim())" -ForegroundColor Red }
+    }
+    else {
+        Write-Host '    the build printed no line that looks like an error.' -ForegroundColor Red
+        Write-Host '    If it also printed nothing above, check that dotnet runs at all:' -ForegroundColor Red
+        Write-Host "      & '$Dotnet' --info" -ForegroundColor Red
+    }
+    Write-Host "    full output: $log" -ForegroundColor Red
+    Die "$What failed"
+}
+
 # decompiled assembly -> the project directory it becomes.
 # RoundLines and InputEventSystem fold into the WindowSystem project, exactly as the port's own
 # tree does: the studio shipped them as separate DLLs, and the port merges them so the deployed
 # assembly count drops.
+# Which kit this is, before anything else, so that a pasted log identifies itself. A build report
+# that does not say which version it came from costs a round trip to find out, and the answer has
+# already mattered once: a kit whose newfiles/ and patches/ were from different versions.
+$kitVersion = Join-Path $Here 'kit-version.txt'
+if (Test-Path $kitVersion) {
+    Get-Content $kitVersion | Where-Object { $_ -and -not $_.StartsWith('#') } |
+        ForEach-Object { Write-Host "    kit $_" -ForegroundColor DarkGray }
+}
+
+# Any stamp from a previous run goes now: it means "this run finished", and nothing else.
+if ($Work) {
+    Remove-Item (Join-Path $Work 'build-succeeded.stamp') -Force -ErrorAction SilentlyContinue
+}
+
 $Map = [ordered]@{
     'UnclaimedWorld'         = 'src\UnclaimedWorld'
     'WindowSystem'           = 'src\WindowSystem'
@@ -325,8 +383,7 @@ $gameProj = Join-Path $Src 'src\UnclaimedWorld\UnclaimedWorld.csproj'
 Push-Location $Work
 try {
     Write-Host '    phase 1: building so the generator has something to reflect over...'
-    & $Dotnet build $gameProj -c Release -p:UwPlatform=DX -v q --nologo
-    if ($LASTEXITCODE -ne 0) { Die 'phase-1 build failed' }
+    Invoke-Dotnet 'phase-1 build' 'phase1-build' @('build', $gameProj, '-c', 'Release', '-p:UwPlatform=DX', '-v', 'q', '--nologo')
 
     # Reconstruct ProxyCodeGenerator.cs from YOUR decompiled CustomXmlSerializer.cs.
     #
@@ -361,8 +418,7 @@ try {
     }
 
     $bin = Join-Path $Work 'artifacts\bin\UnclaimedWorld\release_dx'
-    & $Dotnet build (Join-Path $Src 'tools\XmlProxyGen\XmlProxyGen.csproj') -c Release -v q --nologo -p:UwGameBin=$bin
-    if ($LASTEXITCODE -ne 0) { Die 'could not build XmlProxyGen' }
+    Invoke-Dotnet 'building XmlProxyGen' 'xmlproxygen' @('build', (Join-Path $Src 'tools\XmlProxyGen\XmlProxyGen.csproj'), '-c', 'Release', '-v', 'q', '--nologo', "-p:UwGameBin=$bin")
     $gen = Get-ChildItem (Join-Path $Work 'artifacts\bin\XmlProxyGen') -Recurse -Filter xmlproxygen.exe |
              Select-Object -First 1
     if (-not $gen) { Die 'xmlproxygen.exe not found' }
@@ -371,7 +427,7 @@ try {
     # Steamworks.NET is the one that matters: the copy at the build-output root is a REFERENCE
     # assembly and throws "Cannot load a reference assembly for execution"; the usable one is
     # under runtimes\win-x64. A publish is what puts it there.
-    & $Dotnet publish $gameProj -c Release -p:UwPlatform=DX -v q --nologo | Out-Null
+    Invoke-Dotnet 'publish for the generator' 'publish-for-generator' @('publish', $gameProj, '-c', 'Release', '-p:UwPlatform=DX', '-v', 'q', '--nologo')
     Copy-Item (Join-Path $bin '*.dll') $gen.DirectoryName -Force -ErrorAction SilentlyContinue
     $rt = Get-ChildItem (Join-Path $Work 'artifacts\publish\UnclaimedWorld\release_dx\runtimes\win-x64') `
             -Recurse -Filter Steamworks.NET.dll -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -389,8 +445,7 @@ $h = if ($Harmony -eq 'yes') { 'true' } else { 'false' }
 $u = if ($UnhiddenMod -eq 'yes') { 'true' } else { 'false' }
 Push-Location $Work
 try {
-    & $Dotnet publish $gameProj -c Release -p:UwPlatform=DX -p:UwHarmony=$h -p:UwUnhiddenMod=$u -v q --nologo
-    if ($LASTEXITCODE -ne 0) { Die 'build failed' }
+    Invoke-Dotnet 'build' 'build' @('publish', $gameProj, '-c', 'Release', '-p:UwPlatform=DX', "-p:UwHarmony=$h", "-p:UwUnhiddenMod=$u", '-v', 'q', '--nologo')
 } finally { Pop-Location }
 $pub = Join-Path $Work 'artifacts\publish\UnclaimedWorld\release_dx'
 if (-not (Test-Path (Join-Path $pub 'UnclaimedWorld.dll'))) { Die 'no output produced' }
@@ -418,7 +473,7 @@ $tool = Get-ChildItem (Join-Path $Work 'artifacts\bin\MgfxTranscode') -Recurse -
           -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $tool) {
     Push-Location $Work
-    try { & $Dotnet build (Join-Path $Src 'tools\MgfxTranscode\MgfxTranscode.csproj') -c Release -v q --nologo } finally { Pop-Location }
+    try { Invoke-Dotnet 'building MgfxTranscode' 'mgfxtranscode' @('build', (Join-Path $Src 'tools\MgfxTranscode\MgfxTranscode.csproj'), '-c', 'Release', '-v', 'q', '--nologo') } finally { Pop-Location }
     $tool = Get-ChildItem (Join-Path $Work 'artifacts\bin\MgfxTranscode') -Recurse -Filter mgfxtranscode.exe |
               Select-Object -First 1
 }
@@ -454,6 +509,12 @@ else {
     if (-not (Test-Path $wmv)) { Warn 'TauCetiMainMenu.wmv not found - the still image will be used' }
     else { New-MenuAnimation -Ffmpeg $Ffmpeg -Source $wmv -Dest (Join-Path $Out 'MainMenuIntro.uwanim') }
 }
+
+# A stamp, so the caller cannot mistake a failed run for a finished one. Exit codes from a .ps1
+# invoked with & are easy to lose - and losing one is what let setup-port.ps1 report "Done" over a
+# port with no game exe in it. A file either exists or it does not.
+Set-Content -Path (Join-Path $Work 'build-succeeded.stamp') `
+            -Value (Get-Date -Format 'o') -Encoding UTF8
 
 Write-Host ''
 Ok "port built into $Out"
