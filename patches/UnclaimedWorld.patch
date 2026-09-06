@@ -1865,6 +1865,95 @@
 +			UWGame.Mods.ModSettings.EffectiveSignature, StringComparison.Ordinal);
 +		if (The.Sim.StartGameParams.IsSameScenario(snapshotHeader.StartGameParams) && sameMods)
  		{
+--- a/UWGame/ClientSide/Interface/Inventory/InventoryPanel.cs
++++ b/UWGame/ClientSide/Interface/Inventory/InventoryPanel.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
+@@ -1390,3 +1390,5 @@
+ 			{
+-				return HandleProcess(entityType, processType, owner, out hasInputs, out hasTools, out maxAmountThatCanBeProduced, out noOfMissingInputTypes, out noOfAvailableInputTypes, out hasSkills, out hasResources, out hasSpecialSite, out hasPolicy, out needsImmovableInput, out outputBatchAmount, allAvailableItems);
++				bool handled = HandleProcess(entityType, processType, owner, out hasInputs, out hasTools, out maxAmountThatCanBeProduced, out noOfMissingInputTypes, out noOfAvailableInputTypes, out hasSkills, out hasResources, out hasSpecialSite, out hasPolicy, out needsImmovableInput, out outputBatchAmount, allAvailableItems);
++				maxAmountThatCanBeProduced += MaxFromOtherRoutes(entityType, value, processType, owner, allowProcess, allAvailableItems);
++				return handled;
+ 			}
+@@ -1407,2 +1409,75 @@
+ 	}
++
++	/// <summary>
++	/// How many more of this item the OTHER recipes could make, on top of what the displayed one
++	/// can.
++	///
++	/// Nothing in the stock game needed this: no item had two ways to make it, so the amount the
++	/// chosen recipe could produce was the amount, full stop. The mod's alternative recipes broke
++	/// that quietly - "10 dry peat, so 5 charcoal" while 14 firewood sat in the store, because the
++	/// firewood route was not the one being displayed. Reported by Kastuk, with a screenshot of a
++	/// slider that stopped at 5.
++	///
++	/// ONLY ROUTES THAT DO NOT COMPETE ARE ADDED. Two recipes drawing on the same material cannot
++	/// both have their full amount: 10 sticks is 10 arrows OR 10 handles, not 20 of each. So a
++	/// route is counted only when every item it consumes is untouched by the routes already
++	/// counted - which is exactly true of the peat and firewood charcoal routes, and false of
++	/// anything sharing a material. Under-counting a competing route is the conservative error:
++	/// it can only ever say you can make fewer than you can, never more.
++	/// </summary>
++	private static int MaxFromOtherRoutes(EntityType entityType, List<ProcessType> processes, ProcessType shown, EntityGroup owner, Predicate<ProcessType> allowProcess, Dictionary<EntityType, Availability> allAvailableItems)
++	{
++		if (processes.Count < 2)
++		{
++			return 0;
++		}
++
++		HashSet<EntityType> claimed = ConsumedInputs(shown);
++		int extra = 0;
++		foreach (ProcessType candidate in processes)
++		{
++			if (candidate == shown || (allowProcess != null && !allowProcess(candidate)))
++			{
++				continue;
++			}
++			HashSet<EntityType> needs = ConsumedInputs(candidate);
++			if (needs.Overlaps(claimed))
++			{
++				continue;
++			}
++			if (!HandleProcess(entityType, candidate, owner, out var _, out var _, out int amount, out var _, out var _, out var _, out var _, out var _, out var _, out var _, out var _, allAvailableItems))
++			{
++				continue;
++			}
++			if (amount > 0)
++			{
++				extra += amount;
++				claimed.UnionWith(needs);
++			}
++		}
++		return extra;
++	}
++
++	/// <summary>
++	/// The item types a recipe uses up. Inputs it needs but does not consume - a tool, the stones
++	/// a campfire is laid on - are excluded: they are still there afterwards, so two recipes both
++	/// naming one are not competing for it.
++	/// </summary>
++	private static HashSet<EntityType> ConsumedInputs(ProcessType process)
++	{
++		HashSet<EntityType> consumed = new HashSet<EntityType>();
++		if (process?.Inputs == null)
++		{
++			return consumed;
++		}
++		Input[] inputs = process.Inputs;
++		foreach (Input input in inputs)
++		{
++			if (input.IsConsumed && input.EntityType != null)
++			{
++				consumed.Add(input.EntityType);
++			}
++		}
++		return consumed;
++	}
+ 
 --- a/UWGame/ClientSide/Interface/Inventory/InventorySettings.cs
 +++ b/UWGame/ClientSide/Interface/Inventory/InventorySettings.cs
 @@ -401,2 +401,8 @@

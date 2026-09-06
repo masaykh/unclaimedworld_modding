@@ -45,9 +45,8 @@
 +				InvokeMouseOut(CurrentMouseEventArgs());
 +			}
  			if (controls == null)
-@@ -279,2 +294,20 @@
- 	}
-+
+@@ -280,2 +295,20 @@
+ 
 +	/// <summary>
 +	/// The pointer's current position, in the coordinates the GUI's own mouse events use, for
 +	/// synthesizing an event that the input system is not going to send.
@@ -65,4 +64,67 @@
 +		}
 +		return args;
 +	}
- 
++
+ 	public virtual string ToolTip
+@@ -926,2 +959,6 @@
+ 		{
++			// Before it is orphaned: a control removed while the pointer is on it never hears
++			// about the pointer leaving, and whatever it set on MouseOver - a cursor, a tint -
++			// stays set with nothing left to unset it.
++			control.ReleaseHoverTree();
+ 			control.Parent = null;
+@@ -1301,2 +1338,3 @@
+ 		Refresh();
++		ReleaseHoverIfPointerLeft();
+ 	}
+@@ -1306,2 +1344,50 @@
+ 		Refresh();
++		ReleaseHoverIfPointerLeft();
++	}
++
++	/// <summary>
++	/// The pointer can leave a component without moving: the component can move out from under it.
++	///
++	/// MouseOut is only ever sent from CheckMouseStatus, which runs on mouse MOVEMENT - so a
++	/// stationary pointer over something that then scrolls, moves or is resized away keeps its
++	/// hover forever. That is the second half of the stuck resize cursor: hiding the window was
++	/// one route (handled in the Visible setter), and scrolling a data sheet under a still pointer
++	/// is the other. Reported both times by the same modder, the second time after the first fix.
++	///
++	/// Only on an actual move or resize of a component that currently holds the hover, so a
++	/// per-frame position check - which the report specifically asked to avoid - is not needed.
++	/// </summary>
++	private void ReleaseHoverIfPointerLeft()
++	{
++		if (!isMouseOver || guiManager == null || guiManager.InputData == null)
++		{
++			return;
++		}
++		if (!CheckCoordinates(guiManager.InputData.mouseX, guiManager.InputData.mouseY))
++		{
++			InvokeMouseOut(CurrentMouseEventArgs());
++		}
++	}
++
++	/// <summary>
++	/// Gives up this component's hover, and its children's, wherever they are holding one.
++	///
++	/// For removal, which - unlike hiding - does not cascade through the Visible setter: a control
++	/// taken out of its parent while the pointer is on it would otherwise keep isMouseOver true
++	/// for good, along with whatever it did on the way in.
++	/// </summary>
++	internal void ReleaseHoverTree()
++	{
++		if (isMouseOver)
++		{
++			InvokeMouseOut(CurrentMouseEventArgs());
++		}
++		if (controls == null)
++		{
++			return;
++		}
++		foreach (UIComponent control in controls)
++		{
++			control.ReleaseHoverTree();
++		}
+ 	}
