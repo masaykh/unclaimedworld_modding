@@ -1,7 +1,17 @@
 # Everything the kit produces locally. None of it belongs in the repo: work/ holds a decompile
 # of the game, and port/ holds a built derivative of it.
-work/
-port/
-prereqs/
+#
+# ANCHORED WITH A LEADING SLASH, and that is not a style choice. `port/` without one matches a
+# directory named "port" ANYWHERE in the tree - and on Windows, where git checks out with
+# core.ignoreCase, it matches "Port" too. So it silently swallowed
+# newfiles/src/UnclaimedWorld/UWGame/Port/, five source files the build cannot do without, and
+# every fresh clone of this repo failed in phase 1 with
+#
+#     error CS0234: The type or namespace name 'Port' does not exist in the namespace 'UWGame'
+#
+# while the zipped kit, which is not a git checkout, built perfectly. Reported by a modder.
+/work/
+/port/
+/prereqs/
 *.log
-uwkit.exe
+/orchestrator/uwkit.exe
