@@ -1,4 +1,4 @@
-# Helpers for build-port.ps1. Dot-sourced, no side effects on import.
+﻿# Helpers for build-port.ps1. Dot-sourced, no side effects on import.
 
 # ---------------------------------------------------------------- unified diff applier
 #
@@ -150,7 +150,7 @@ function New-MenuAnimation {
     try {
         Write-Host "    extracting frames at ${Width}x${Height} @ ${Fps}fps ..."
         & $Ffmpeg -nostdin -v error -y -i $Source -vf "fps=$Fps,scale=${Width}:${Height}" `
-                  -q:v $Quality (Join-Path $tmp '%05d.jpg') 2>&1 | Out-Null
+                  -pix_fmt yuvj420p -q:v $Quality (Join-Path $tmp '%05d.jpg') 2>&1 | Out-Null
 
         $frames = Get-ChildItem $tmp -Filter *.jpg | Sort-Object Name
         if ($frames.Count -lt 1) {

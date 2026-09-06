@@ -1404,6 +1404,24 @@
 +[assembly: AssemblyProduct("UnclaimedWorld")]
 +[assembly: AssemblyTitle("UnclaimedWorld")]
  [assembly: AssemblyVersion("1.0.4.8")]
+--- a/UWGame/Client/MainMenu/LoadSavedGame/LoadSavedGameInterface.cs
++++ b/UWGame/Client/MainMenu/LoadSavedGame/LoadSavedGameInterface.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using GameStateManagement;
+@@ -21,4 +21,10 @@
+ 
++	// PORT: addTooltip, which this screen never asked for. CommonInterface only creates a Tooltip
++	// when told to, and without one nothing on this screen can show a tooltip at all - which
++	// nobody noticed, because until the save list started marking modded saves there was nothing
++	// on it with a tooltip to show. Its sibling LoadMapInterface has always passed true. Reported
++	// as "Savegame menu work fine ... but Loadgame menu not show tooltip at MODDED", which is
++	// exactly the difference: the save dialog runs under the in-game interface, which has one.
+ 	public LoadSavedGameInterface(LoadSavedGameScreen loadGameScreen, UnclaimedWorld game)
+-		: base(game)
++		: base(game, addGuiManagerNow: true, addTooltip: true)
+ 	{
 --- a/UWGame/ClientSide/Client.cs
 +++ b/UWGame/ClientSide/Client.cs
 @@ -207,3 +207,3 @@
@@ -2576,6 +2594,10 @@
  		case DataType.UserSettings:
 --- a/UWGame/Control/BackgroundScreen.cs
 +++ b/UWGame/Control/BackgroundScreen.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using Microsoft.Xna.Framework;
 @@ -4,4 +4,4 @@
  using Microsoft.Xna.Framework.Graphics;
 -using Microsoft.Xna.Framework.Media;
@@ -2615,7 +2637,7 @@
 -	private Regulator videoRestartRegulator;
 -
  	public BackgroundScreen(Background background)
-@@ -46,12 +59,14 @@
+@@ -46,12 +59,23 @@
  		{
 -			content = new ContentManager(base.Controller.Game.Services);
 +			content = new UWGame.Port.UwContentManager(base.Controller.Game.Services);
@@ -2631,11 +2653,20 @@
 -			player.Play(video);
 -			videoRestartRegulator = new Regulator(null, 1.0 / video.Duration.TotalSeconds, "BacgroundScreen");
 +			animation = MenuAnimation.Shared;
++
++			// A .uwanim can parse and still be undecodable - the container says nothing about the
++			// JPEG encoding inside it. Ask before committing to it, because the alternative is
++			// what a modder actually got: no animation AND no still image, because the still is
++			// only loaded when the animation is missing, and this one was present.
++			if (animation != null && !animation.TryPrepare(base.Controller.GraphicsDevice))
++			{
++				animation = null;
++			}
  		}
 -		else
 +		if (animation == null)
  		{
-@@ -64,6 +79,7 @@
+@@ -64,6 +88,7 @@
  	{
 -		if (base.Controller.Options.PlayVideo)
 -		{
@@ -2647,7 +2678,7 @@
 +		animation = null;
 +		animationTexture = null;
  		content.Unload();
-@@ -74,6 +90,5 @@
+@@ -74,6 +99,5 @@
  		base.Update(gameTime, otherScreenHasFocus, coveredByOtherScreen: false);
 -		if (base.Controller.Options.PlayVideo && player.State == MediaState.Stopped)
 -		{
@@ -2657,7 +2688,7 @@
 +		// happen here - a frame sequence simply loops, so there is no stopped state to recover
 +		// from and no way for the background to stay frozen.
  	}
-@@ -95,10 +110,14 @@
+@@ -95,10 +119,14 @@
  		base.Controller.GraphicsDevice.Clear(Color.Black);
 -		if (base.Controller.Options.PlayVideo && player != null && player.State != MediaState.Stopped && player.Video != null)
 +

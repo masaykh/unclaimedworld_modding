@@ -1,4 +1,4 @@
-#!/bin/sh
+﻿#!/bin/sh
 # Converts the main-menu background video into MainMenuIntro.uwanim - a motion-JPEG frame
 # sequence the game plays without any video decoder.
 #
@@ -65,7 +65,7 @@ echo "==> source:  $SRC ($(du -h "$SRC" | cut -f1))"
 echo "==> frames:  ${WIDTH}x${HEIGHT} @ ${FPS}fps, jpeg -q:v $QUALITY"
 
 "$FFMPEG" -nostdin -v error -y -i "$SRC" \
-  -vf "fps=$FPS,scale=$WIDTH:$HEIGHT" -q:v "$QUALITY" "$TMP/%05d.jpg"
+  -vf "fps=$FPS,scale=$WIDTH:$HEIGHT" -pix_fmt yuvj420p -q:v "$QUALITY" "$TMP/%05d.jpg"
 
 COUNT=$(ls "$TMP"/*.jpg 2>/dev/null | wc -l | tr -d ' ')
 [ "$COUNT" -gt 0 ] || { echo "FATAL: ffmpeg produced no frames" >&2; exit 1; }

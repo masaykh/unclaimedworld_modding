@@ -500,6 +500,84 @@ Get-ChildItem $srcContent -Recurse -Filter *.xnb | ForEach-Object {
 & $tool.FullName validate  $override | Select-Object -Last 1
 Ok "$copied effect(s) converted; your Content\ untouched"
 
+# ---------------------------------------------------------------- 7b. Steam integration
+#
+# THIS STEP WAS MISSING FROM THIS SCRIPT. uwkit.exe has always had it; the PowerShell path did
+# not, so a port built this way got Steamworks.NET.dll - the managed half, which comes out of the
+# build - and no steam_api64.dll at all. The game then throws DllNotFoundException on startup,
+# catches it, and reports "Steam has not initialized correctly. Achievements cannot be unlocked",
+# which is true and says nothing about why. Reported by a modder whose port folder had the managed
+# DLL and no prereqs\steamworks.zip.
+Step 'Steam integration'
+$steamAppId = Join-Path $Game 'steam_appid.txt'
+if (Test-Path $steamAppId) {
+    Copy-Item $steamAppId (Join-Path $Out 'steam_appid.txt') -Force
+    Ok 'steam_appid.txt (from your installation)'
+} else {
+    Warn 'steam_appid.txt not found in your game folder - Steam will not attach'
+}
+
+$steamDest = Join-Path $Out 'steam_api64.dll'
+if (Test-Path $steamDest) {
+    Ok 'steam_api64.dll already present'
+}
+else {
+    # Your game's own copy first, and only download if it is genuinely too old. The installation
+    # ships Steamworks SDK ~1.34, and the Steamworks.NET this builds against P/Invokes three
+    # entry points it does not export - so using it would throw rather than merely lose
+    # achievements. That is a property of THIS version of the game, not a law, so the test is on
+    # the file rather than assumed: a copy that exports what is needed is used as it is.
+    $needed = @('SteamInternal_SteamAPI_Init', 'SteamInternal_CreateInterface', 'SteamAPI_ManualDispatch_Init')
+    $steamLocal = Join-Path $Game 'steam_api64.dll'
+    $used = $false
+    if (Test-Path $steamLocal) {
+        $bytes = [IO.File]::ReadAllBytes($steamLocal)
+        $ascii = [Text.Encoding]::ASCII.GetString($bytes)
+        $missing = @($needed | Where-Object { $ascii.IndexOf($_) -lt 0 })
+        if ($missing.Count -eq 0) {
+            Copy-Item $steamLocal $steamDest -Force
+            Ok 'steam_api64.dll taken from your own installation (it exports what we need)'
+            $used = $true
+        }
+        else {
+            Warn "your game's steam_api64.dll is too old - missing $($missing.Count) export(s), e.g. $($missing[0])"
+            Write-Host '    Steamworks.NET calls those directly, so it cannot be used as-is.'
+        }
+    }
+
+    if (-not $used) {
+        # Must match the Steamworks.NET package version the port builds against.
+        $steamVer = '2024.8.0'
+        $steamUrl = "https://github.com/rlabrecque/Steamworks.NET/releases/download/$steamVer/Steamworks.NET-Standalone_$steamVer.zip"
+        $cache = Join-Path $Here 'prereqs\steamworks.zip'
+        New-Item -ItemType Directory -Force -Path (Split-Path $cache) | Out-Null
+        try {
+            if (-not (Test-Path $cache)) {
+                Write-Host "    $steamUrl"
+                Invoke-WebRequest -Uri $steamUrl -OutFile $cache -UseBasicParsing
+            }
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [IO.Compression.ZipFile]::OpenRead($cache)
+            try {
+                $entry = $zip.Entries | Where-Object { [IO.Path]::GetFileName($_.FullName) -eq 'steam_api64.dll' } | Select-Object -First 1
+                if ($entry) {
+                    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $steamDest, $true)
+                    Ok "steam_api64.dll ($([int]((Get-Item $steamDest).Length / 1KB)) KB, matches Steamworks.NET $steamVer)"
+                }
+                else {
+                    Warn 'steam_api64.dll not found in the archive - continuing without achievements'
+                }
+            } finally { $zip.Dispose() }
+        }
+        catch {
+            # Never fatal. The game runs without Steam and says so; a failed download is not a
+            # reason to throw away a working build.
+            Warn "could not fetch the Steam native library: $($_.Exception.Message)"
+            Write-Host '    The port will run without achievements and log why in Errors.txt.'
+        }
+    }
+}
+
 # ---------------------------------------------------------------- 8. menu animation
 Step 'Menu background animation'
 if ($MenuAnimation -ne 'yes') { Warn 'skipped by choice - the still image will be used' }

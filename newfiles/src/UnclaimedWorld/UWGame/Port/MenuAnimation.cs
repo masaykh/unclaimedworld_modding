@@ -273,8 +273,41 @@ public sealed class MenuAnimation : IDisposable
         return Decode(device, (currentFrame + advance) % frames.Length);
     }
 
+    /// <summary>
+    /// Set once a frame has failed to decode. Every later frame would fail the same way - they
+    /// came out of one encoder in one run - so the animation gives up rather than trying again
+    /// twelve times a second.
+    ///
+    /// It logged each failure, which is how a modder ended up with a 42 KB Errors.txt of the same
+    /// sentence and a black menu background. Once is information; six hundred times is a fault of
+    /// its own.
+    /// </summary>
+    private bool decodeFailed;
+
+    /// <summary>Whether the frames in this file can be decoded at all. See <see cref="TryPrepare"/>.</summary>
+    public bool Usable => !decodeFailed;
+
+    /// <summary>
+    /// Decodes the first frame, so a caller can find out BEFORE drawing anything whether this
+    /// animation works - and fall back to the still background image if it does not.
+    ///
+    /// Needed because a .uwanim can parse perfectly and still be undecodable: the container is
+    /// eight bytes of magic, a header and JPEG blobs, and nothing in reading it says whether
+    /// MonoGame's decoder accepts the encoding those blobs are in. Progressive JPEG is the usual
+    /// case - StbImageSharp, which MonoGame uses, reads baseline and extended sequential only,
+    /// and some ffmpeg builds will produce progressive without being asked.
+    /// </summary>
+    public bool TryPrepare(GraphicsDevice device)
+    {
+        return Decode(device, 0) != null;
+    }
+
     private Texture2D Decode(GraphicsDevice device, int index)
     {
+        if (decodeFailed)
+        {
+            return null;
+        }
         if (index == currentFrame && currentTexture != null)
         {
             return currentTexture;
@@ -292,8 +325,16 @@ public sealed class MenuAnimation : IDisposable
         }
         catch (Exception ex)
         {
+            decodeFailed = true;
+            UnavailableReason = ex.Message;
             GameStateManagement.UnclaimedWorld.LogError(
-                $"Could not decode menu animation frame {index}: {ex.Message}",
+                $"Could not decode menu animation frame {index}: {ex.Message}" + Environment.NewLine
+                + $"  the frame is {DescribeJpeg(frames[index])}" + Environment.NewLine
+                + "  MonoGame decodes baseline and extended-sequential JPEG only. If this says"
+                + " progressive, the ffmpeg that built the file chose an encoding it cannot read -"
+                + " rebuild the animation, or delete " + FileName + " to use the still background."
+                + Environment.NewLine
+                + "  The still background is being used, and this is not reported again.",
                 "Menu animation unavailable");
             currentTexture?.Dispose();
             currentTexture = null;
@@ -301,6 +342,62 @@ public sealed class MenuAnimation : IDisposable
         }
 
         return currentTexture;
+    }
+
+    /// <summary>
+    /// What kind of JPEG a frame is, read from its SOF marker.
+    ///
+    /// The exception MonoGame raises says "This image format is not supported" and nothing more,
+    /// which leaves the two people looking at it guessing. The marker is four bytes into the
+    /// stream and says exactly which encoding it is, so there is no reason to guess.
+    /// </summary>
+    private static string DescribeJpeg(byte[] frame)
+    {
+        if (frame == null || frame.Length < 4)
+        {
+            return "empty";
+        }
+        if (frame[0] != 0xFF || frame[1] != 0xD8)
+        {
+            return $"not a JPEG at all (starts {frame[0]:X2} {frame[1]:X2})";
+        }
+
+        // Walk the segment chain looking for a start-of-frame marker. Every segment after SOI is
+        // 0xFF, a marker byte, then a big-endian length that includes the length bytes.
+        int at = 2;
+        while (at + 3 < frame.Length)
+        {
+            if (frame[at] != 0xFF)
+            {
+                return "malformed - segment marker expected at byte " + at;
+            }
+            byte marker = frame[at + 1];
+            switch (marker)
+            {
+            case 0xC0:
+                return "baseline JPEG, which MonoGame can read";
+            case 0xC1:
+                return "extended sequential JPEG, which MonoGame can read";
+            case 0xC2:
+                return "PROGRESSIVE JPEG, which MonoGame cannot read";
+            case 0xC3:
+                return "lossless JPEG, which MonoGame cannot read";
+            case 0xC9:
+            case 0xCA:
+            case 0xCB:
+                return "arithmetic-coded JPEG, which MonoGame cannot read";
+            case 0xD8:
+            case 0xD9:
+                return "truncated before any frame header";
+            }
+            int length = (frame[at + 2] << 8) | frame[at + 3];
+            if (length < 2)
+            {
+                return "malformed - segment length " + length;
+            }
+            at += 2 + length;
+        }
+        return "JPEG with no frame header - truncated at " + frame.Length + " bytes";
     }
 
     public void Dispose()
