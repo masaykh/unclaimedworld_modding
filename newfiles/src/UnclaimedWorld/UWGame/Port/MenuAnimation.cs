@@ -95,6 +95,16 @@ public sealed class MenuAnimation : IDisposable
     /// <summary>The file name this looks for, in the game root.</summary>
     public const string FileName = "MainMenuIntro.uwanim";
 
+    /// <summary>
+    /// Why the menu is showing a still image rather than the animation, or null when it is not.
+    ///
+    /// Kept because "the menu background is not moving" is otherwise unanswerable from outside:
+    /// the file is optional, so its absence was silent, and a player cannot tell "you deleted it"
+    /// from "the build never made one" from "it is there and will not parse". Those have
+    /// different answers and the game is the only thing in a position to know which it is.
+    /// </summary>
+    public static string UnavailableReason { get; private set; }
+
     private static MenuAnimation TryLoad()
     {
         // The game root, resolved the same way Config.GetDataFolderPath resolves data/ and
@@ -102,15 +112,38 @@ public sealed class MenuAnimation : IDisposable
         string path = Path.Combine(Directory.GetCurrentDirectory(), FileName);
         if (!File.Exists(path))
         {
+            UnavailableReason = FileName + " is not in " + Directory.GetCurrentDirectory()
+                + " - the still background image is used instead.";
+            GameStateManagement.UnclaimedWorld.LogError(
+                UnavailableReason + Environment.NewLine
+                + "  This is not a fault if you deleted it: doing so is the documented way to get"
+                + " the still background." + Environment.NewLine
+                + "  If you did not, the build step that creates it was skipped - it needs ffmpeg"
+                + " and your own copy of Content\\MainMenu\\TauCetiMainMenu.wmv."
+                + " build/33-make-menu-animation.sh is the step.",
+                "Menu animation: using the still background");
             return null;
         }
 
         MenuAnimation animation = LoadFrom(path, out string error);
         if (animation == null)
         {
-            // Never fatal: the still background is a perfectly good menu.
+            // Never fatal: the still background is a perfectly good menu. But say how big the file
+            // was as well as what went wrong with it - a zero-byte or truncated file is a
+            // different story from a well-formed one this build cannot read, and the length is
+            // the cheapest way to tell them apart.
+            long length = -1L;
+            try
+            {
+                length = new FileInfo(path).Length;
+            }
+            catch (Exception)
+            {
+            }
+            UnavailableReason = error;
             GameStateManagement.UnclaimedWorld.LogError(
-                $"Could not load {FileName}, falling back to the still menu background: {error}",
+                $"Could not load {FileName} ({(length >= 0 ? length + " bytes" : "size unknown")}),"
+                + $" falling back to the still menu background: {error}",
                 "Menu animation unavailable");
         }
         return animation;

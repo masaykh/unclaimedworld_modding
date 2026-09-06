@@ -1,5 +1,5 @@
 # Which kit this is. Printed by the build so a report identifies itself.
-built:    2026-09-06T14:58:55Z
-commit:   98c2282
+built:    2026-09-06T17:14:10Z
+commit:   bef2b86
 newfiles: 13 source file(s)
 game:     1.0.4.8

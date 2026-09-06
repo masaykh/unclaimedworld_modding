@@ -677,8 +677,13 @@ public static class ModSettings
             {
                 settingState = ModContentState.Disabled;
             }
+            // "CHARCOAL FROM PEAT", not "CHARCOAL FROM PEAT: true". A toggle's value adds nothing
+            // to its label - being listed at all is what says it was on - and the ": true" made
+            // the save panel's one-line summary long enough to overflow its box.
+            bool valueWorthShowing = value.Length > 0
+                && (known == null || known.Kind != ModSettingKind.Toggle);
             parts.Add(new KeyValuePair<string, ModContentState>(
-                (known != null ? known.Label : id) + (value.Length > 0 ? ": " + value : ""),
+                (known != null ? known.Label : id) + (valueWorthShowing ? ": " + value : ""),
                 settingState));
         }
         return parts;

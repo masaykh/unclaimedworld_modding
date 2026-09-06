@@ -1908,6 +1908,25 @@
 +			textButton7.Width = 59;
 +		}
  	}
+--- a/UWGame/ClientSide/Interface/MessageBox.cs
++++ b/UWGame/ClientSide/Interface/MessageBox.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using Microsoft.Xna.Framework;
+@@ -39,4 +39,10 @@
+ 
+-	public MessageBox(CommonInterface intf, string title = "MESSAGE")
+-		: base(intf, title, new Point(420, 300), new Vector2(330f, 250f), Level.MessageBox, PanelType.RegularEdges)
++	/// <summary>
++	/// PORT: the size is a parameter now, defaulting to the studio's 330x250 so every existing
++	/// call is unchanged. One message the port added - what modded content a save needs, against
++	/// what this session has - is two lists and cannot be made to fit in that box: it came out
++	/// clipped on both sides, which is worse than not showing it.
++	/// </summary>
++	public MessageBox(CommonInterface intf, string title = "MESSAGE", Vector2? size = null)
++		: base(intf, title, new Point(420, 300), size ?? new Vector2(330f, 250f), Level.MessageBox, PanelType.RegularEdges)
+ 	{
 --- a/UWGame/ClientSide/Interface/OptionsDialog.cs
 +++ b/UWGame/ClientSide/Interface/OptionsDialog.cs
 @@ -1,2 +1,3 @@
@@ -1936,7 +1955,7 @@
  		fbSoundVolume.KnobWidth = 16;
 +		BuildModsSection(uIComponent, fbSoundVolume.Bottom + 24);
  		errorsAndMessages = new ErrorsAndMessages(lcdSurface, Window.guiManager, 6, lcdSurface.Height - 24);
-@@ -322,2 +335,159 @@
+@@ -322,2 +335,162 @@
  
 +	/// <summary>
 +	/// The MODS section: one control per registered <see cref="ModSetting"/>, in registration
@@ -1969,7 +1988,10 @@
 +			panel.Add(note);
 +			note.Init(Label.LabelType.LCDNormal);
 +			note.NormalColor = UIComponent.errorColor;
-+			note.Text = "Content changes apply the next time a game is started or loaded!";
++			// Kept to the width of the studio's own warning above ("Restart the game to apply
++			// Graphics changes!"): the surface is about 340px and a longer line is simply clipped
++			// at the panel edge, which is how the first version shipped.
++			note.Text = "Content changes apply at the next game start!";
 +			note.FitToText();
 +			note.X = 6;
 +			note.Y = lineY;
@@ -2096,7 +2118,7 @@
 +	}
 +
  	private Label AddSectionHeader(int xYpos, UIComponent panel, string text)
-@@ -497,2 +667,3 @@
+@@ -497,2 +670,3 @@
  			options.ZoomFactor = 0.01f * (float)fbZoom.Value;
 +			ApplyModSettings();
  			ApplyAndSaveOptionsToFile();
@@ -2124,21 +2146,33 @@
 +	private string pendingSaveMods;
 +
  	public string SelectedSaveGamePath { get; private set; }
-@@ -82,2 +91,13 @@
+@@ -82,2 +91,25 @@
  		}
 +		// The same warning the version note above gives, for the other thing that can make a save
 +		// unopenable: the modded content it was written with. Stated once, where a player is about
 +		// to write or open one, rather than as a dialog on every save - a confirmation seen every
 +		// time is a confirmation nobody reads.
++		//
++		// ONE LINE, and the detail lives in each row's MODDED tooltip. The first version appended a
++		// sentence and the mod list to the note above, which was written to fit the 58px the grid
++		// below it starts at - so it grew to four lines and ran over the first save in the list.
++		// Reported by Kastuk, with a screenshot of exactly that.
 +		string moddedNow = ModSettings.Signature();
 +		if (!string.IsNullOrEmpty(moddedNow))
 +		{
-+			taNote.Text += " THIS GAME HAS MODDED CONTENT: "
-+				+ ModSettings.Describe(moddedNow).Replace(Environment.NewLine, ", ")
-+				+ ". Saves made with it are marked MODDED and need the same content to load.";
++			taNote.Text += " Modded content is on; saves made with it are marked MODDED.";
++		}
++
++		// Whatever the note ended up being, the list starts below it. The studio's fixed 58px
++		// margin was right for the studio's text and is not a promise about anyone else's.
++		int noteBottom = taNote.Bottom + 4;
++		if (noteBottom > grid.Y)
++		{
++			grid.Height -= noteBottom - grid.Y;
++			grid.Y = noteBottom;
 +		}
  		output = new ErrorsAndMessages(lcdSurface, intf.gui, x, taNote.Bottom);
-@@ -168,3 +188,8 @@
+@@ -168,3 +200,8 @@
  		label3.Y = label2.Bottom + num2;
 -		label3.Text = "Date: " + header.Timestamp.ToString(Config.Culture);
 +		// Was header.Timestamp.ToString(Config.Culture). Config.Culture is not a display setting -
@@ -2148,7 +2182,7 @@
 +		// invariant culture. See PortSettings.SaveDateFormat.
 +		label3.Text = "Date: " + ModSettings.FormatDate(header.Timestamp, PortSettings.SaveDateFormat.Value);
  		Label label4 = new Label(Interface.gui);
-@@ -184,2 +209,21 @@
+@@ -184,2 +221,21 @@
  		lCDInnerPanel3.Panel.X = lCDInnerPanel2.Panel.Right - 2;
 +		// A save carrying modded content says so, in the list, before it is opened. The header is
 +		// all this needs - the save list reads headers only - so marking every save costs one
@@ -2170,13 +2204,13 @@
 +				"items it contains.");
 +		}
  		TextButton textButton = new TextButton(Interface.gui);
-@@ -193,2 +237,5 @@
+@@ -193,2 +249,5 @@
  		textButton.Tag1 = fullPath;
 +		// The stamp travels with the button so the click handler does not have to open the file
 +		// again to find out what the save needs.
 +		textButton.Tag2 = header.Mods ?? "";
  		if (SaveOrLoadValue == SaveOrLoad.Save)
-@@ -275,2 +322,9 @@
+@@ -275,2 +334,9 @@
  		List<Tuple<string, long, SnapshotHeader>> snapshotHeaders = GetSnapshotHeaders(listOfSavedGamePaths);
 +		// UNHIDDEN MOD: newest save first. The Harmony patch had to replace this whole method
 +		// with a reflection-driven copy to get one sort in; from inside the assembly it is a
@@ -2186,7 +2220,7 @@
 +			snapshotHeaders = snapshotHeaders.OrderByDescending((Tuple<string, long, SnapshotHeader> x) => x.Item3.Timestamp).ToList();
 +		}
  		grid.BeginAddingEntries();
-@@ -288,15 +342,97 @@
+@@ -288,15 +354,100 @@
  		Console.WriteLine(sender.Tag1.ToString());
 -		if (File.Exists(text))
 +		if (!File.Exists(text))
@@ -2265,14 +2299,16 @@
 +	/// </summary>
 +	private void AskAboutModsThenLoad(string saveMods)
 +	{
-+		string had = ModSettings.Describe(saveMods) ?? "nothing - it is a stock save";
-+		string have = ModSettings.Describe(ModSettings.EffectiveSignature) ?? "nothing - this is a stock game";
++		string had = ModSettings.Describe(saveMods) ?? "nothing - a stock save";
++		string have = ModSettings.Describe(ModSettings.EffectiveSignature) ?? "nothing - a stock game";
 +		// One box, created on first use and reused. A new one per click would leave a Window behind
 +		// in the GUI manager every time somebody changed their mind.
 +		pendingSaveMods = saveMods;
 +		if (modMessageBox == null)
 +		{
-+			modMessageBox = new MessageBox(Interface, "DIFFERENT MODS");
++			// Wider and taller than the default box. Two lists and a sentence do not fit in
++			// 330x250: the first version came out clipped on both sides.
++			modMessageBox = new MessageBox(Interface, "DIFFERENT MODS", new Vector2(560f, 420f));
 +			modMessageBox.OKClick += delegate
 +			{
 +				// In memory only. The file is not rewritten: this is "open that save", not "change
@@ -2282,11 +2318,12 @@
 +			};
 +		}
 +		modMessageBox.ShowMessage(
-+			"This save was made with:" + Environment.NewLine + had + Environment.NewLine + Environment.NewLine +
-+			"This game is running:" + Environment.NewLine + have + Environment.NewLine + Environment.NewLine +
-+			"OK loads it with the settings it was made with, for this session. CANCEL leaves it " +
-+			"alone. Turn off ASK ABOUT MODS WHEN LOADING in the options to always load with your " +
-+			"own settings instead.",
++			"MADE WITH:" + Environment.NewLine + had + Environment.NewLine + Environment.NewLine +
++			"YOU ARE RUNNING:" + Environment.NewLine + have + Environment.NewLine + Environment.NewLine +
++			"OK loads it with the save's settings, for this" + Environment.NewLine +
++			"session only. CANCEL leaves it alone." + Environment.NewLine + Environment.NewLine +
++			"ASK ABOUT MODS WHEN LOADING, in the options," + Environment.NewLine +
++			"turns this off.",
 +			"DIFFERENT MODS", modal: true, MessageBox.ButtonOptions.OKAndCancel);
 +	}
  
@@ -3286,7 +3323,12 @@
  			}
 --- a/UWGame/Steam/SteamManager.cs
 +++ b/UWGame/Steam/SteamManager.cs
-@@ -24,2 +24,29 @@
+@@ -1,2 +1,3 @@
+-using System;
++﻿using System;
++using System.IO;
+ using System.Text;
+@@ -24,2 +25,147 @@
  	{
 +		// PORT DEVIATION 4 (see PORTING-NOTES.md).
 +		// Controller.Initialize calls this unconditionally and unguarded. The original was safe
@@ -3307,12 +3349,151 @@
 +		{
 +			isInitialized = false;
 +			Console.WriteLine("[Steamworks.NET] Steam native library unavailable or incompatible: " + ex.Message);
-+			UnclaimedWorld.LogError("Achievements will not be available.",
-+				"[Steamworks.NET] Steam native library unavailable or incompatible.");
++			UnclaimedWorld.LogError(
++				ex.GetType().Name + ": " + ex.Message + Environment.NewLine + Environment.NewLine + Report(),
++				"Steam: the native library could not be loaded - achievements are off");
 +			return false;
++		}
++	}
++
++	/// <summary>
++	/// Everything known about this installation's Steam setup, as one block.
++	///
++	/// WHY. The failure a player sees is one line at the bottom of the main menu - "Steam has not
++	/// initialized correctly" - and until now that was also all the game knew. Three quite
++	/// different things produce it: the Steam client is not running, steam_api64.dll is missing or
++	/// is a build too old for the flat exports Steamworks.NET P/Invokes, or the appid is not
++	/// visible to the API. They need three different answers, and the difference is cheap to
++	/// record but impossible to guess afterwards.
++	///
++	/// Written to Errors.txt on failure only. It is diagnostic detail, not news, and a line in
++	/// Errors.txt on a healthy launch trains people to ignore the file.
++	/// </summary>
++	private static string Report()
++	{
++		StringBuilder text = new StringBuilder();
++		string dir = Directory.GetCurrentDirectory();
++		text.AppendLine("  working directory : " + dir);
++		text.AppendLine("  steam running     : " + SafeIsSteamRunning());
++
++		// The native library, which is the half of the pair that goes wrong. Steamworks.NET
++		// P/Invokes flat-API exports that only exist in newer builds, so a steam_api64.dll from
++		// the shipped 2016 game loads and then fails to bind - the size and timestamp are what
++		// tell an old one from a current one at a glance.
++		AppendFile(text, "  steam_api64.dll   : ", Path.Combine(dir, "steam_api64.dll"));
++		AppendFile(text, "  steam_api.dll     : ", Path.Combine(dir, "steam_api.dll"));
++
++		// steam_appid.txt is how the API knows which game it is when the exe was not launched by
++		// Steam. Without it, and outside Steam, Init fails with no obvious cause.
++		string appid = Path.Combine(dir, "steam_appid.txt");
++		if (File.Exists(appid))
++		{
++			string content;
++			try
++			{
++				content = File.ReadAllText(appid).Trim();
++			}
++			catch (Exception ex)
++			{
++				content = "unreadable: " + ex.Message;
++			}
++			text.AppendLine("  steam_appid.txt   : " + content);
++		}
++		else
++		{
++			text.AppendLine("  steam_appid.txt   : ABSENT - required when the game is not started by Steam");
++		}
++
++		text.AppendLine("  Steamworks.NET    : " + SafeAssemblyVersion());
++		text.AppendLine("  Packsize.Test()   : " + SafeTest(() => Packsize.Test()));
++		text.AppendLine("  DllCheck.Test()   : " + SafeTest(() => DllCheck.Test()));
++		text.Append("  If Steam is not running, that is the whole answer. If it is, and the DLL is ");
++		text.Append("the one that shipped with the game in 2016, it is too old for this build - ");
++		text.Append("build/12-fetch-steam-natives.sh fetches a matching one.");
++		return text.ToString();
++	}
++
++	private static void AppendFile(StringBuilder text, string label, string path)
++	{
++		if (!File.Exists(path))
++		{
++			text.AppendLine(label + "absent");
++			return;
++		}
++		try
++		{
++			FileInfo info = new FileInfo(path);
++			text.AppendLine(label + info.Length + " bytes, written " +
++				info.LastWriteTimeUtc.ToString("yyyy-MM-dd") + " UTC");
++		}
++		catch (Exception ex)
++		{
++			text.AppendLine(label + "present, but unreadable: " + ex.Message);
++		}
++	}
++
++	/// <summary>
++	/// IsSteamRunning goes through the same native library that may be the thing that is broken,
++	/// so it gets the same treatment as everything else here: a failure is an answer, not an
++	/// exception thrown out of the diagnostics.
++	/// </summary>
++	private static string SafeIsSteamRunning()
++	{
++		try
++		{
++			return SteamAPI.IsSteamRunning() ? "yes" : "NO - start Steam, or accept that achievements are off";
++		}
++		catch (Exception ex)
++		{
++			return "could not ask (" + ex.GetType().Name + ")";
++		}
++	}
++
++	private static string SafeTest(Func<bool> test)
++	{
++		try
++		{
++			return test() ? "pass" : "FAIL";
++		}
++		catch (Exception ex)
++		{
++			return "threw " + ex.GetType().Name;
++		}
++	}
++
++	private static string SafeAssemblyVersion()
++	{
++		try
++		{
++			return typeof(SteamAPI).Assembly.GetName().Version?.ToString() ?? "unknown";
++		}
++		catch (Exception ex)
++		{
++			return "unknown (" + ex.GetType().Name + ")";
 +		}
 +	}
 +
 +	private bool InitializeCore()
 +	{
  		if (s_EverInialized)
+@@ -36,8 +182,16 @@
+ 		}
+-		isInitialized = SteamAPI.Init();
++
++		// InitEx rather than Init. Both do the same thing; InitEx also hands back Valve's own
++		// reason - k_ESteamAPIInitResult_NoSteamClient, VersionMismatch, FailedGeneric - and a
++		// message string written by the API itself. Init() collapses all of that into false,
++		// which is how "Steam has not initialized correctly" came to be everything the game knew.
++		ESteamAPIInitResult result = SteamAPI.InitEx(out string steamErrMsg);
++		isInitialized = result == ESteamAPIInitResult.k_ESteamAPIInitResult_OK;
+ 		if (!isInitialized)
+ 		{
+-			Console.WriteLine("[Steamworks.NET] SteamAPI_Init() failed. Refer to Valve's documentation or the comment above this line for more information.", this);
+-			string title = "[Steamworks.NET] SteamAPI_Init() failed.";
+-			UnclaimedWorld.LogError("Achievements will not be available.", title);
++			Console.WriteLine("[Steamworks.NET] SteamAPI_InitEx() failed: " + result + " - " + steamErrMsg, this);
++			UnclaimedWorld.LogError(
++				result + ": " + (string.IsNullOrWhiteSpace(steamErrMsg) ? "(no message)" : steamErrMsg.Trim())
++					+ Environment.NewLine + Environment.NewLine + Report(),
++				"Steam did not initialise - achievements are off");
+ 			return false;
