@@ -96,6 +96,10 @@ public static class UnhiddenMod
 
     private static ModSetting peatBuilding;
 
+    private static ModSetting stringAlternatives;
+
+    private static ModSetting capResourceRespawn;
+
     private static ModSetting experimental;
 
     /// <summary>
@@ -127,6 +131,41 @@ public static class UnhiddenMod
             affectsSimulation: true, takesEffectOnNextLoad: true));
 
     /// <summary>
+    /// Whether a fishing net can be made from any string rather than cotton string only.
+    /// </summary>
+    public static ModSetting StringAlternatives =>
+        stringAlternatives ?? (stringAlternatives = ModSettings.Toggle(
+            ModId, "stringAlternatives", "NETS FROM ANY STRING", defaultValue: true,
+            toolTip: "Adds a fishing net recipe that uses rawhide string. Stock only accepts " +
+                     "cotton string, which leaves rawhide string with no use at all.",
+            affectsSimulation: true, takesEffectOnNextLoad: true));
+
+    /// <summary>
+    /// Whether a replenishing resource tile is topped up to its high-water mark, or grows past it.
+    ///
+    /// The studio's ReplenishResourceItems computes exactly this clamp and then throws the result
+    /// away - Common.Clamp is a pure function and its return value is not assigned. So a tile adds
+    /// FractionOfMaximumToReplenishEachTime x its own maximum on every replenish point, on top of
+    /// whatever is already there, and the maximum is a ratchet that then records the larger count.
+    /// For a resource with a fraction of 1.0 - torux shellfish, and it is not alone - that is a
+    /// near-doubling every time the tile has been harvested at all.
+    ///
+    /// Reported by Kastuk as shellfish "spawning endlessly, until coast become covered in hundreds
+    /// of that easy food". Switched rather than unconditional because it changes the food economy
+    /// of a running game, and because the port's patches are supposed to leave gameplay alone -
+    /// this is a gameplay fix, so it lives in the mod.
+    ///
+    /// It takes effect immediately, and no save can tell whether it was on: the clamp only decides
+    /// how many items a tile gains this tick.
+    /// </summary>
+    public static ModSetting CapResourceRespawn =>
+        capResourceRespawn ?? (capResourceRespawn = ModSettings.Toggle(
+            ModId, "capResourceRespawn", "CAP RESOURCE RESPAWN", defaultValue: true,
+            toolTip: "Tops a resource tile back up to the most it has ever held, instead of adding " +
+                     "that much again on top. Without it, shellfish and other fully-replenishing " +
+                     "resources multiply every time they are harvested."));
+
+    /// <summary>
     /// A switch that does nothing, on purpose.
     ///
     /// It is here so that trying something out costs a recompile and not a redesign: hang an
@@ -152,6 +191,8 @@ public static class UnhiddenMod
     {
         _ = CharcoalFromPeat;
         _ = PeatBuilding;
+        _ = StringAlternatives;
+        _ = CapResourceRespawn;
         _ = Experimental;
     }
 
@@ -259,6 +300,7 @@ public static class UnhiddenMod
     public static void AddProcesses(List<ProcessType> listOfProcessTypes)
     {
         AddPeatConstruction(listOfProcessTypes);
+        AddStringAlternatives(listOfProcessTypes);
 
         if (!CharcoalFromPeat.On)
         {
@@ -392,8 +434,8 @@ public static class UnhiddenMod
                 continue;
             }
 
-            Input[] inputs = SwapFirewoodForPeat(stock.Inputs);
-            Output[] outputs = SwapFirewoodForPeat(stock.Outputs);
+            Input[] inputs = SwapInput(stock.Inputs, "item:firewood", "item:dryPeat");
+            Output[] outputs = SwapOutput(stock.Outputs, "item:firewood", "item:dryPeat");
             if (inputs == null || outputs == null)
             {
                 // No firewood in it after all - somebody else already changed this recipe. Leave it.
@@ -411,22 +453,23 @@ public static class UnhiddenMod
     }
 
     /// <summary>
-    /// A copy of the inputs with firewood replaced by dry peat, or null if there was no firewood.
+    /// A copy of the inputs with one item swapped for another, or null if the original did not
+    /// name the item being swapped out.
     /// Every element is copied rather than shared: the loader initialises these objects in place,
     /// and an object reachable from two ProcessTypes would be initialised twice.
     /// </summary>
-    private static Input[] SwapFirewoodForPeat(Input[] original)
+    private static Input[] SwapInput(Input[] original, string fromItem, string toItem)
     {
         bool found = false;
         Input[] copy = new Input[original.Length];
         for (int i = 0; i < original.Length; i++)
         {
             Input from = original[i];
-            bool isFirewood = from.Entity == "item:firewood";
-            found |= isFirewood;
+            bool isSwapped = from.Entity == fromItem;
+            found |= isSwapped;
             copy[i] = new Input
             {
-                Entity = isFirewood ? "item:dryPeat" : from.Entity,
+                Entity = isSwapped ? toItem : from.Entity,
                 Tag = from.Tag,
                 IsConsumed = from.IsConsumed,
                 BecomesPartOfProduct = from.BecomesPartOfProduct,
@@ -440,19 +483,19 @@ public static class UnhiddenMod
         return found ? copy : null;
     }
 
-    /// <summary>The same for the outputs - the fuel the structure is handed when it is finished.</summary>
-    private static Output[] SwapFirewoodForPeat(Output[] original)
+    /// <summary>The same for the outputs. requireMatch:false deep-copies without substituting.</summary>
+    private static Output[] SwapOutput(Output[] original, string fromItem, string toItem, bool requireMatch = true)
     {
         bool found = false;
         Output[] copy = new Output[original.Length];
         for (int i = 0; i < original.Length; i++)
         {
             Output from = original[i];
-            bool isFirewood = from.EntityTypeToCreate == "item:firewood";
-            found |= isFirewood;
+            bool isSwapped = from.EntityTypeToCreate == fromItem;
+            found |= isSwapped;
             copy[i] = new Output
             {
-                EntityTypeToCreate = isFirewood ? "item:dryPeat" : from.EntityTypeToCreate,
+                EntityTypeToCreate = isSwapped ? toItem : from.EntityTypeToCreate,
                 IsWasteProduct = from.IsWasteProduct,
                 RelativePlacement = from.RelativePlacement,
                 ToolContainerTagsToPlaceIn = from.ToolContainerTagsToPlaceIn,
@@ -464,7 +507,60 @@ public static class UnhiddenMod
                 }
             };
         }
-        return found ? copy : null;
+        return (found || !requireMatch) ? copy : null;
+    }
+
+    /// <summary>Fishing net recipes added by <see cref="AddStringAlternatives"/>.</summary>
+    private static readonly List<ProcessType> stringVariants = new List<ProcessType>();
+
+    /// <summary>
+    /// A fishing net from rawhide string, alongside the stock cotton-string one.
+    ///
+    /// WHY. `makeFishingNet` names `item:cottonString` by key, and it is the only recipe in the
+    /// game that consumes a string of any kind. So `item:rawhideString` - which has its own
+    /// recipe, `makeRawhideString`, and its own place in the tables - is consumed by NOTHING. It
+    /// is craftable and useless. (`item:advancedString` is worse: no recipe makes it and none
+    /// consumes it.) Reported by Kastuk as "illogical to not use all other alternative strings",
+    /// and he is right - this is a gap rather than a balance decision.
+    ///
+    /// A clone rather than a hand-written recipe, for the same reason as the peat builds: the
+    /// skill, tools and work time stay the studio's.
+    ///
+    /// NOT a tag. The right fix is one recipe matching a "string" TAG, and `Input.Tag` exists in
+    /// the data for exactly that - but nothing reads it: inputs are matched by key, and only fuel
+    /// is matched by tag. Until tag inputs are implemented, a variant per string is what works,
+    /// and there is exactly one other string to vary by.
+    /// </summary>
+    private static void AddStringAlternatives(List<ProcessType> listOfProcessTypes)
+    {
+        stringVariants.Clear();
+        if (!StringAlternatives.On)
+        {
+            return;
+        }
+
+        ProcessType stock = listOfProcessTypes.Find(
+            (ProcessType p) => p != null && p.KeyName == "makeFishingNet" && !p.DeleteRecord);
+        if (stock == null || stock.Inputs == null || stock.Outputs == null)
+        {
+            return;
+        }
+
+        Input[] inputs = SwapInput(stock.Inputs, "item:cottonString", "item:rawhideString");
+        if (inputs == null)
+        {
+            return;
+        }
+
+        ProcessType rawhide = new ProcessType(stock, "makeFishingNetFromRawhide", null)
+        {
+            Inputs = inputs,
+            // Deep-copied although nothing in them changes: the loader initialises Output objects
+            // in place, and one reachable from two ProcessTypes would be initialised twice.
+            Outputs = SwapOutput(stock.Outputs, null, null, requireMatch: false)
+        };
+        listOfProcessTypes.Add(rawhide);
+        stringVariants.Add(rawhide);
     }
 
     /// <summary>
@@ -487,9 +583,9 @@ public static class UnhiddenMod
             }
         }
 
-        // Same again for the peat-fuelled builds: the structures already have an entry, from the
-        // stock recipe, and this adds the alternative route into it.
-        foreach (ProcessType build in peatBuilds)
+        // Same again for the peat-fuelled builds and the rawhide net: the output already has an
+        // entry, from the stock recipe, and this adds the alternative route into it.
+        foreach (ProcessType build in peatBuilds.Concat(stringVariants))
         {
             if (build.Outputs == null || build.Outputs.Length == 0)
             {

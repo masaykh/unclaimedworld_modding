@@ -18,3 +18,51 @@
 -[assembly: Guid("cb8ead86-fb12-4d1f-aaae-794d56674caf")]
 -[assembly: AssemblyFileVersion("1.0.0.0")]
  [assembly: AssemblyVersion("1.0.0.0")]
+--- a/WindowSystem/UIComponent.cs
++++ b/WindowSystem/UIComponent.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
+@@ -267,4 +267,19 @@
+ 		{
+-			_ = visible;
++			bool wasVisible = visible;
+ 			visible = value;
++			// A component that is hidden while the pointer is on it never gets its MouseOut.
++			// CheckMouseStatus - the only thing that sends one - returns immediately for anything
++			// invisible, so the hover is left switched on: isMouseOver stays true, and whatever the
++			// component did on MouseOver stays done. For a ResizableArea that means the resize
++			// cursor stays a double arrow after the window under it closes, which is the "cursor
++			// gets stuck in that mode for a while" a modder reported; it also means the next time
++			// the component is shown under the pointer it will not raise MouseOver, because as far
++			// as it knows the pointer never left.
++			//
++			// Sent here rather than checked per frame, which is what the report asked for: this
++			// costs nothing except at the moment something is hidden.
++			if (wasVisible && !value && isMouseOver)
++			{
++				InvokeMouseOut(CurrentMouseEventArgs());
++			}
+ 			if (controls == null)
+@@ -279,2 +294,20 @@
+ 	}
++
++	/// <summary>
++	/// The pointer's current position, in the coordinates the GUI's own mouse events use, for
++	/// synthesizing an event that the input system is not going to send.
++	///
++	/// InputData is the source rather than Mouse.GetState because that is where every real
++	/// MouseEventArgs comes from - see InputData.UpdateNewState - so a synthesized one agrees with
++	/// them even if the two ever stop being the same numbers.
++	/// </summary>
++	private MouseEventArgs CurrentMouseEventArgs()
++	{
++		MouseEventArgs args = new MouseEventArgs();
++		if (guiManager != null && guiManager.InputData != null)
++		{
++			args.Position = new Point(guiManager.InputData.mouseX, guiManager.InputData.mouseY);
++		}
++		return args;
++	}
+ 

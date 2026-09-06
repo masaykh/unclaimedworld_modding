@@ -31,6 +31,21 @@ public static class UnhiddenMod
     /// <summary>Kept assignable because Client.HandleInput writes to it inside a dead branch.</summary>
     public static bool ShadowsDisabled;
 
+    /// <summary>
+    /// Kept because ResourceReplenish reads it inside a dead branch - the guard there is
+    /// <c>UnhiddenMod.Enabled &amp;&amp; UnhiddenMod.CapResourceRespawn.On</c>, and although
+    /// <see cref="Enabled"/> is a compile-time false the expression still has to type-check.
+    ///
+    /// Registered with nothing, so it never appears in ModSettings.xml or the options menu, and
+    /// permanently off: a build without the mod gets the studio's behaviour, which is the whole
+    /// meaning of leaving the mod out.
+    /// </summary>
+    public static readonly ModSetting CapResourceRespawn =
+        new ModSetting(ModId, "capResourceRespawn", ModSettingKind.Toggle, "false");
+
+    /// <summary>The prefix the mod's settings would carry, for the stub above.</summary>
+    public const string ModId = "unhidden";
+
     public static void Disable()
     {
     }

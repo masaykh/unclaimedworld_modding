@@ -1715,18 +1715,22 @@
  		}
 --- a/UWGame/ClientSide/Interface/HUD_Windows/DataSheet.cs
 +++ b/UWGame/ClientSide/Interface/HUD_Windows/DataSheet.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
 @@ -6,2 +6,3 @@
  using Microsoft.Xna.Framework;
 +using Microsoft.Xna.Framework.Input;
  using UWGame.Client.Interface;
-@@ -375,4 +376,66 @@
+@@ -375,4 +376,92 @@
  		}
 +		else if (UWGame.Mods.UnhiddenMod.Enabled)
 +		{
 +			UpdateWheelScrolling();
 +		}
-+	}
-+
+ 	}
+ 
 +	/// <summary>
 +	/// UNHIDDEN MOD: mouse wheel scrolls the expanded grid, in addition to the studio's
 +	/// hover-over-the-arrow scrolling.
@@ -1738,6 +1742,18 @@
 +	/// in a static that Client.HandleInput also wrote to, which coupled two unrelated classes.
 +	///
 +	/// Only runs in the else branch, so a wheel turn cannot fight an arrow hover.
++	///
++	/// ONLY THE SHEET UNDER THE POINTER SCROLLS. Polling is per-instance, so without this every
++	/// open data sheet saw the same wheel movement and they all scrolled together - reported by
++	/// Kastuk, and the obvious consequence of polling that nobody notices with one window open.
++	/// GUIManager already tracks which component a wheel event belongs to (mouseWheelTarget, from
++	/// its own hit test), and MouseWheelReceiver() hands it over, so the sheet can ask rather than
++	/// guess. Comparing parent windows rather than the component itself is what makes it work
++	/// wherever the pointer is inside the sheet - over a row, a header or the empty space below.
++	///
++	/// The baseline is updated whether or not this sheet is the target. It has to be: a baseline
++	/// frozen while the pointer is elsewhere would store up every notch turned over other windows
++	/// and spend them the moment the pointer came back.
 +	/// </summary>
 +	private void UpdateWheelScrolling()
 +	{
@@ -1749,11 +1765,11 @@
 +			return;
 +		}
 +		int delta = wheel - wheelBaseline;
-+		if (delta == 0 || currentlyShownExpandedGrid == null)
++		wheelBaseline = wheel;
++		if (delta == 0 || currentlyShownExpandedGrid == null || !PointerIsOverThisSheet())
 +		{
 +			return;
 +		}
-+		wheelBaseline = wheel;
 +
 +		// A fixed step per notch, rather than the time-scaled speed the hover path uses - a
 +		// wheel notch is a discrete event, not a duration.
@@ -1777,8 +1793,22 @@
 +			}
 +			ShowScrollDownArea();
 +		}
- 	}
- 
++	}
++
++	/// <summary>
++	/// Whether the mouse wheel currently belongs to this data sheet, according to the GUI's own
++	/// hit test rather than a geometry comparison of our own.
++	/// </summary>
++	private bool PointerIsOverThisSheet()
++	{
++		if (gui == null || DisplayWindow == null)
++		{
++			return false;
++		}
++		UIComponent wheelTarget = gui.MouseWheelReceiver();
++		return wheelTarget != null && wheelTarget.GetParentWindow() == DisplayWindow;
++	}
++
 +	private const int wheelScrollStep = 30;
 +
 +	private int wheelBaseline;
@@ -3153,6 +3183,31 @@
 +		// switched on: changing a switch changes the next build, not the tables in memory.
 +		UWGame.Mods.ModSettings.MarkDataBuilt();
  	}
+--- a/UWGame/SimSide/Resources/ResourceReplenish.cs
++++ b/UWGame/SimSide/Resources/ResourceReplenish.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using Microsoft.Xna.Framework;
+@@ -68,3 +68,17 @@
+ 			int num = (int)Math.Round(parent.ResourceType.FractionOfMaximumToReplenishEachTime * (float)(int)maxResourceItemsEverSet);
+-			Common.Clamp(num, 1, maxResourceItemsEverSet - parent.NoOfHarvestableItems);
++			// The studio's line was `Common.Clamp(num, 1, maxResourceItemsEverSet - parent.NoOfHarvestableItems);`
++			// - a pure function called as a statement, its result dropped. So `num` is not the
++			// amount needed to reach the maximum; it is the fraction of the maximum, added on top of
++			// what is already there. With a fraction of 1.0 the tile roughly DOUBLES, and
++			// UpdateMaxItemsEverSet then ratchets the maximum up to the new count, so the next
++			// harvest starts the next doubling from higher up.
++			//
++			// UNHIDDEN MOD: use the clamp the studio computed. Under the switch because it changes
++			// the food economy of a running game, and because the port's own patches are meant to
++			// leave gameplay alone.
++			int clamped = Common.Clamp(num, 1, maxResourceItemsEverSet - parent.NoOfHarvestableItems);
++			if (UWGame.Mods.UnhiddenMod.Enabled && UWGame.Mods.UnhiddenMod.CapResourceRespawn.On)
++			{
++				num = clamped;
++			}
+ 			parent.AddResourceItems(num);
 --- a/UWGame/SimSide/Snapshots/SnapshotHeader.cs
 +++ b/UWGame/SimSide/Snapshots/SnapshotHeader.cs
 @@ -1,3 +1,4 @@
