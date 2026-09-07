@@ -21,7 +21,7 @@
 +using UWGame.Port;
 +using UWGame.SimSide;
  
-@@ -8,9 +8,129 @@
+@@ -8,9 +8,137 @@
  {
 +	/// <summary>
 +	/// PORT DEVIATION 13 (see PORTING-NOTES.md). Was <c>Main()</c>, with no arguments at all.
@@ -118,6 +118,14 @@
 +		// and on, so -nomods leaves no trace of it in the file or the menu.
 +		UWGame.Mods.ModSettings.Load(UnclaimedWorld.LogError);
 +		UWGame.Mods.PortSettings.RegisterSettings();
++		// The mods that ship as their own file, each answering one request. Always registered:
++		// unlike the bundled Unhidden Mod they are not a build-time feature, so their switches are
++		// in the file and the menu whatever the build, and each is off with one click.
++		UWGame.Mods.MapEdgeMod.RegisterSettings();
++		UWGame.Mods.HealingMod.RegisterSettings();
++		UWGame.Mods.SelfPreservationMod.RegisterSettings();
++		UWGame.Mods.MagnificationMod.RegisterSettings();
++		UWGame.Mods.BalancedDietMod.RegisterSettings();
 +		if (UWGame.Mods.UnhiddenMod.Enabled)
 +		{
 +			UWGame.Mods.UnhiddenMod.RegisterSettings();
@@ -155,14 +163,14 @@
 -			MessageBox.Show("It appears that you don't have Windows Media Player installed. This game needs system features bound to Windows Media Player. Please install the Media Feature Pack corresponding to your Windows version to run this game:" + Environment.NewLine + Environment.NewLine + "Windows 7: http://www.microsoft.com/en-US/download/details.aspx?id=16546" + Environment.NewLine + Environment.NewLine + "Windows 8: http://www.microsoft.com/en-US/download/details.aspx?id=30685" + Environment.NewLine + Environment.NewLine + "Windows 8.1: http://www.microsoft.com/en-US/download/details.aspx?id=40744" + Environment.NewLine + Environment.NewLine + "Windows 10: https://www.microsoft.com/en-US/download/details.aspx?id=48231" + Environment.NewLine + Environment.NewLine + "Windows Vista & XP: http://www.microsoft.com/en-US/download/windows-media-player-details.aspx?id=8163", "Missing Windows Media Player", MessageBoxButtons.OK, MessageBoxIcon.Hand);
 +			PlatformWindow.ShowErrorDialog(IntPtr.Zero, effectProblem, "Shaders not set up");
  			return;
-@@ -19,2 +139,6 @@
+@@ -19,2 +147,6 @@
  		unclaimedWorld.Exiting += game_Exiting;
 +		// NOTE: game 1.0.4.8 DELETED the target-monitor placement that used to be here, so the
 +		// port follows it and no longer calls PlatformWindow.PlaceWindowOnMonitor. The helper is
 +		// kept (PORT DEVIATION 10 still covers the codec dialog above), so restoring the
 +		// behaviour is one line if Options.TargetMonitorNumber is wanted back.
  		try
-@@ -29,2 +153,6 @@
+@@ -29,2 +161,6 @@
  
 +	// NOTE: `windowForm_Load` used to sit here - 13 lines of WinForms that positioned the
 +	// window on `Screen.AllScreens[1]` with a hardcoded monitor index of 2. It had no
@@ -2557,6 +2565,23 @@
  
 +	/// <summary>
  	private void DrawTopAndBottomEdges(Rectangle rect, Rectangle sourcerect)
+--- a/UWGame/ClientSide/MapClient.cs
++++ b/UWGame/ClientSide/MapClient.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
+@@ -928,2 +928,10 @@
+ 		Vector2 vector = MapWindowWorldPosition + new Vector2(deltaX, deltaY);
++		// MOD: hold the view inside the map instead of allowing half a screen of overscroll at
++		// every edge, which is where the empty grid behind the world shows.
++		if (UWGame.Mods.MapEdgeMod.Enabled)
++		{
++			MapWindowWorldPosition = UWGame.Mods.MapEdgeMod.Clamp(vector, The.Sim.Controller.DrawArea,
++				The.Map.MapWorldWidth, The.Map.MapWorldHeight);
++			return;
++		}
+ 		int num = The.Sim.Controller.DrawArea.Width / 2;
 --- a/UWGame/ClientSide/Screens/LoadingScreen.cs
 +++ b/UWGame/ClientSide/Screens/LoadingScreen.cs
 @@ -108,3 +108,3 @@
@@ -2709,16 +2734,26 @@
  			base.Controller.SpriteBatch.End();
 --- a/UWGame/Control/Controller.cs
 +++ b/UWGame/Control/Controller.cs
+@@ -1,2 +1,2 @@
+-#define TRACE
++﻿#define TRACE
+ using System;
 @@ -8,3 +8,2 @@
  using System.Threading;
 -using System.Windows.Forms;
  using GameStateManagement;
-@@ -133,3 +132,3 @@
+@@ -103,2 +102,5 @@
+ 
++	/// <summary>MOD: the too-small-screen warning is reported once, not on every device reset.</summary>
++	private bool warnedAboutDrawArea;
++
+ 	public InputData InputData => inputManager.InputData;
+@@ -133,3 +135,3 @@
  		this.game = game;
 -		content = new ContentManager(game.Services);
 +		content = new UWGame.Port.UwContentManager(game.Services);
  		content.RootDirectory = "Content";
-@@ -206,3 +205,8 @@
+@@ -206,3 +208,8 @@
  		{
 -			((Form)System.Windows.Forms.Control.FromHandle(game.Window.Handle)).Location = new System.Drawing.Point(10, 10);
 +			// PORT DEVIATION 10 (see PORTING-NOTES.md). Game 1.0.4.8 added this windowed-mode
@@ -2728,6 +2763,49 @@
 +			// because System.Windows.Forms does not exist on the GL target at all.
 +			game.Window.Position = new Microsoft.Xna.Framework.Point(10, 10);
  		}
+@@ -220,2 +227,13 @@
+ 		}
++		// MOD: say so when the interface will not fit, instead of letting panels be cut off at the
++		// screen edge with no explanation. Once per session, and only when it is actually true.
++		if (!warnedAboutDrawArea)
++		{
++			string tooSmall = UWGame.Mods.MagnificationMod.TooSmallWarning(DrawArea.Width, DrawArea.Height, ActiveZoomFactor);
++			if (tooSmall != null)
++			{
++				warnedAboutDrawArea = true;
++				GameStateManagement.UnclaimedWorld.LogError(tooSmall, "The screen is smaller than the interface");
++			}
++		}
+ 		foreach (GameScreen screen in screens)
+@@ -264,3 +282,6 @@
+ 		ActiveZoomFactor = Options.ZoomFactor;
+-		ActiveZoomFactor = Common.ClampBottom(ActiveZoomFactor, 1f);
++		// MOD: the floor was 1, which made every magnification below it unavailable rather than
++		// merely unusual. Below 1 the game renders LARGER than the window and scales down, which
++		// is a smaller interface and more of the world on screen.
++		ActiveZoomFactor = UWGame.Mods.MagnificationMod.Clamp(ActiveZoomFactor);
+ 		AudioManager.Init(Options, useFading: false);
+@@ -596,3 +617,4 @@
+ 	{
+-		return ActiveZoomFactor > 1f;
++		// MOD: any factor other than 1 needs the scaled render target, not just factors above it.
++		return UWGame.Mods.MagnificationMod.ZoomIsActive(ActiveZoomFactor);
+ 	}
+--- a/UWGame/SimSide/AI/Goals/EvaluateAttackJobs.cs
++++ b/UWGame/SimSide/AI/Goals/EvaluateAttackJobs.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
+@@ -239,2 +239,8 @@
+ 				AttackJob attackJob = list[num] as AttackJob;
++				// MOD: a colonist who is not in a Bold stance, and an animal with no person
++				// already on the job, do not go looking for a fight nobody ordered.
++				if (UWGame.Mods.SelfPreservationMod.DeclinesThreat(entity, attackJob, jobTypes == JobTypes.AssetThreat))
++				{
++					continue;
++				}
+ 				if (!entityIntelligence.Brain.IsSame(attackJob))
 --- a/UWGame/SimSide/AI/Goals/GoalEat.cs
 +++ b/UWGame/SimSide/AI/Goals/GoalEat.cs
 @@ -188,2 +188,8 @@
@@ -2741,6 +2819,10 @@
  		foreach (Tuple<IKnownEntityData, float> item3 in list.OrderByDescending((Tuple<IKnownEntityData, float> s) => s.Item2))
 --- a/UWGame/SimSide/AllGameData/BaseDataLoader.cs
 +++ b/UWGame/SimSide/AllGameData/BaseDataLoader.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
 @@ -1565,3 +1565,9 @@
  	{
 -		return ProcessLoader.InitProcessTypes();
@@ -2762,6 +2844,11 @@
 +			UWGame.Mods.UnhiddenMod.AddItems(list);
 +			UWGame.Mods.UnhiddenModSmithies.Replace(list);
 +		}
+ 		return list;
+@@ -12584,2 +12598,4 @@
+ 		});
++		// MOD: raw meat, vegetables and staples are specialised so a cooked meal is worth making.
++		UWGame.Mods.BalancedDietMod.AdjustProfiles(list);
  		return list;
 --- a/UWGame/SimSide/AllGameData/DataLoader.cs
 +++ b/UWGame/SimSide/AllGameData/DataLoader.cs
@@ -3306,6 +3393,23 @@
 +			SunIsUp = false;
 +		}
  		if (SunIsUp != sunIsUp)
+--- a/UWGame/SimSide/Entities/Body/Body.cs
++++ b/UWGame/SimSide/Entities/Body/Body.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
+@@ -161,5 +161,9 @@
+ 			float num = lowestHitpointsFraction + (1f - lowestHitpointsFraction) * biologicalEntity.MaxRegainLimit;
++			// MOD: a wound may heal all the way rather than stopping halfway back to full.
++			num = UWGame.Mods.HealingMod.RecoveryCeiling(num);
+ 			if (HitpointsFractionLeft < num)
+ 			{
+-				float val = (float)((double)(Common.ClampBottom(Parent.BiologicalEntity.EnergyLevel, 0.5f) * biologicalEntity.FractionOfMaxHitpointsGainedPerDay * MaxHitpoints) * deltaTimeInSeconds / The.Sim.DateAndTime.SecondsPerDay);
++				// MOD: and how fast depends on food, sleep and morale, not muscle energy alone.
++				float healingFactor = UWGame.Mods.HealingMod.RateFactor(Parent);
++				float val = (float)((double)(healingFactor * Common.ClampBottom(Parent.BiologicalEntity.EnergyLevel, 0.5f) * biologicalEntity.FractionOfMaxHitpointsGainedPerDay * MaxHitpoints) * deltaTimeInSeconds / The.Sim.DateAndTime.SecondsPerDay);
+ 				val = Math.Min(val, MaxHitpoints - GlobalHitpoints);
 --- a/UWGame/SimSide/GameData.cs
 +++ b/UWGame/SimSide/GameData.cs
 @@ -1,2 +1,2 @@

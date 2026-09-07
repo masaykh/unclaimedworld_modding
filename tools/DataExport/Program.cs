@@ -80,6 +80,11 @@ internal static class Program
         // export made without reading them would describe a game nobody is running.
         UWGame.Mods.ModSettings.Load((message, title) => Console.WriteLine("    " + title + ": " + message));
         UWGame.Mods.PortSettings.RegisterSettings();
+        UWGame.Mods.MapEdgeMod.RegisterSettings();
+        UWGame.Mods.HealingMod.RegisterSettings();
+        UWGame.Mods.SelfPreservationMod.RegisterSettings();
+        UWGame.Mods.MagnificationMod.RegisterSettings();
+        UWGame.Mods.BalancedDietMod.RegisterSettings();
         if (UWGame.Mods.UnhiddenMod.Enabled)
         {
             UWGame.Mods.UnhiddenMod.RegisterSettings();
