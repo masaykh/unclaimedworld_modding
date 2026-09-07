@@ -158,7 +158,18 @@ function New-MenuAnimation {
             return $false
         }
 
-        $blobs = $frames | ForEach-Object { [IO.File]::ReadAllBytes($_.FullName) }
+        # A List[byte[]] filled with foreach, NOT `$frames | ForEach-Object { ReadAllBytes }`.
+        #
+        # The pipeline form UNROLLS: PowerShell enumerates any collection a scriptblock emits, so
+        # a byte[] per frame becomes a flat list of individual bytes. $blobs.Count was then the
+        # total number of BYTES, and $b.Length on a single byte is 1 - so the file was written
+        # with a frame count of two million and a length table of ones, and every "frame" was one
+        # byte long. It passed every check the reader has, because the table really did add up to
+        # the bytes that followed it. A modder's menu was blank and the log said "the frame is
+        # empty", which is exactly what it was.
+        $blobs = New-Object 'System.Collections.Generic.List[byte[]]'
+        foreach ($frameFile in $frames) { $blobs.Add([IO.File]::ReadAllBytes($frameFile.FullName)) }
+
         $fs = [IO.File]::Open($Dest, [IO.FileMode]::Create)
         try {
             $w = New-Object IO.BinaryWriter($fs)
@@ -172,6 +183,28 @@ function New-MenuAnimation {
             foreach ($b in $blobs) { $w.Write($b) }
             $w.Flush()
         } finally { $fs.Dispose() }
+
+        # Read the header back and check it against what we meant to write. The bug above shipped
+        # a file that satisfied the game's own parser, so "it wrote without throwing" is not
+        # evidence of anything; the cheap decisive test is that frame 0 starts with the JPEG
+        # marker FF D8.
+        $check = [IO.File]::OpenRead($Dest)
+        try {
+            $r = New-Object IO.BinaryReader($check)
+            $magic = [Text.Encoding]::ASCII.GetString($r.ReadBytes(8))
+            $null = $r.ReadInt32(); $null = $r.ReadInt32(); $null = $r.ReadInt32()
+            $writtenCount = $r.ReadInt32()
+            $null = $r.ReadInt32()
+            $firstLength = if ($writtenCount -gt 0) { $r.ReadInt32() } else { 0 }
+            for ($i = 1; $i -lt $writtenCount; $i++) { $null = $r.ReadInt32() }
+            $firstTwo = if ($firstLength -ge 2) { $r.ReadBytes(2) } else { @() }
+
+            if ($magic -ne 'UWANIM01' -or $writtenCount -ne $blobs.Count -or
+                $firstTwo.Count -lt 2 -or $firstTwo[0] -ne 0xFF -or $firstTwo[1] -ne 0xD8) {
+                Write-Host "    [--]   $(Split-Path $Dest -Leaf) came out wrong (count $writtenCount, first frame $firstLength bytes) - the still image will be used" -ForegroundColor Red
+                return $false
+            }
+        } finally { $check.Dispose() }
 
         $mb = [Math]::Round((Get-Item $Dest).Length / 1MB, 2)
         Write-Host "    [ok]   $($blobs.Count) frames, $mb MB -> $(Split-Path $Dest -Leaf)" -ForegroundColor Green

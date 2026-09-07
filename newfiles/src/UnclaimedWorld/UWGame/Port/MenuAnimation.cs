@@ -216,6 +216,20 @@ public sealed class MenuAnimation : IDisposable
                 {
                     throw new EndOfStreamException($"frame {i} truncated");
                 }
+
+                // Every frame must actually be a JPEG. The arithmetic above - lengths positive,
+                // and the table adding up to the bytes that follow it - is satisfied by a file
+                // whose "frames" are one byte each, which is what a generator bug produced: it
+                // wrote the byte COUNT as the frame count and a table of ones. That file loaded,
+                // and then failed one frame at a time at decode. Two bytes of checking here turns
+                // it into one sentence at load, before anything has been drawn.
+                if (frames[i].Length < 4 || frames[i][0] != 0xFF || frames[i][1] != 0xD8)
+                {
+                    throw new InvalidDataException(
+                        $"frame {i} is {frames[i].Length} bytes and does not start with a JPEG"
+                        + " marker - the file was written by a generator that mangled the frame"
+                        + " table, so rebuild it or delete it to use the still background");
+                }
             }
 
             return new MenuAnimation(frames, width, height, delay);

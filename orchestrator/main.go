@@ -1123,7 +1123,7 @@ func makeAnimation(o *opts, srcVideo, dest string) error {
 	const w, h, fps, q = 854, 480, 12, 4
 	fmt.Printf("       extracting frames at %dx%d @ %dfps ...\n", w, h, fps)
 	cmd := exec.Command(o.ffmpeg, "-nostdin", "-v", "error", "-y", "-i", srcVideo,
-		"-vf", fmt.Sprintf("fps=%d,scale=%d:%d", fps, w, h), "-q:v", strconv.Itoa(q),
+		"-vf", fmt.Sprintf("fps=%d,scale=%d:%d", fps, w, h), "-pix_fmt", "yuvj420p", "-q:v", strconv.Itoa(q),
 		filepath.Join(tmp, "%05d.jpg"))
 	if err := cmd.Run(); err != nil {
 		warn("ffmpeg failed - the still image will be used")
