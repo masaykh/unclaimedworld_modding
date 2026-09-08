@@ -18,6 +18,25 @@
 -[assembly: Guid("cb8ead86-fb12-4d1f-aaae-794d56674caf")]
 -[assembly: AssemblyFileVersion("1.0.0.0")]
  [assembly: AssemblyVersion("1.0.0.0")]
+--- a/WindowSystem/ResizableArea.cs
++++ b/WindowSystem/ResizableArea.cs
+@@ -1,2 +1,2 @@
+-using InputEventSystem;
++﻿using InputEventSystem;
+ using Microsoft.Xna.Framework;
+@@ -71,2 +71,12 @@
+ 		base.GUIManager.SetMouseCursor(MouseSprites.Normal);
++	}
++
++	/// <summary>
++	/// The pointer did not move - this area was hidden, moved or resized out from under it. The
++	/// resize cursor has to be given back either way, and this is the only thing a ResizableArea
++	/// does that outlives it being on screen.
++	/// </summary>
++	protected override void OnHoverReleased()
++	{
++		base.GUIManager.SetMouseCursor(MouseSprites.Normal);
+ 	}
 --- a/WindowSystem/UIComponent.cs
 +++ b/WindowSystem/UIComponent.cs
 @@ -1,2 +1,2 @@
@@ -42,42 +61,21 @@
 +			// costs nothing except at the moment something is hidden.
 +			if (wasVisible && !value && isMouseOver)
 +			{
-+				InvokeMouseOut(CurrentMouseEventArgs());
++				ReleaseHover();
 +			}
  			if (controls == null)
-@@ -280,2 +295,20 @@
- 
-+	/// <summary>
-+	/// The pointer's current position, in the coordinates the GUI's own mouse events use, for
-+	/// synthesizing an event that the input system is not going to send.
-+	///
-+	/// InputData is the source rather than Mouse.GetState because that is where every real
-+	/// MouseEventArgs comes from - see InputData.UpdateNewState - so a synthesized one agrees with
-+	/// them even if the two ever stop being the same numbers.
-+	/// </summary>
-+	private MouseEventArgs CurrentMouseEventArgs()
-+	{
-+		MouseEventArgs args = new MouseEventArgs();
-+		if (guiManager != null && guiManager.InputData != null)
-+		{
-+			args.Position = new Point(guiManager.InputData.mouseX, guiManager.InputData.mouseY);
-+		}
-+		return args;
-+	}
-+
- 	public virtual string ToolTip
-@@ -926,2 +959,6 @@
+@@ -926,2 +941,6 @@
  		{
 +			// Before it is orphaned: a control removed while the pointer is on it never hears
 +			// about the pointer leaving, and whatever it set on MouseOver - a cursor, a tint -
 +			// stays set with nothing left to unset it.
 +			control.ReleaseHoverTree();
  			control.Parent = null;
-@@ -1301,2 +1338,3 @@
+@@ -1301,2 +1320,3 @@
  		Refresh();
 +		ReleaseHoverIfPointerLeft();
  	}
-@@ -1306,2 +1344,50 @@
+@@ -1306,2 +1326,87 @@
  		Refresh();
 +		ReleaseHoverIfPointerLeft();
 +	}
@@ -102,7 +100,7 @@
 +		}
 +		if (!CheckCoordinates(guiManager.InputData.mouseX, guiManager.InputData.mouseY))
 +		{
-+			InvokeMouseOut(CurrentMouseEventArgs());
++			ReleaseHover();
 +		}
 +	}
 +
@@ -115,10 +113,7 @@
 +	/// </summary>
 +	internal void ReleaseHoverTree()
 +	{
-+		if (isMouseOver)
-+		{
-+			InvokeMouseOut(CurrentMouseEventArgs());
-+		}
++		ReleaseHover();
 +		if (controls == null)
 +		{
 +			return;
@@ -127,4 +122,44 @@
 +		{
 +			control.ReleaseHoverTree();
 +		}
++	}
++
++	/// <summary>
++	/// Gives up the hover WITHOUT raising MouseOut.
++	///
++	/// The first version of this raised a synthesized MouseOut, and that was wrong in a way that
++	/// took a crash report to see. MouseOut handlers are written for "the pointer moved off me",
++	/// and some of them clear state that the code hiding the component is about to use. The game's
++	/// own action picker does exactly that: <c>ActionPicker_ActionSelected</c> calls
++	/// <c>HideActionPicker()</c> and then reads <c>actionPickerSourceButton</c>, which
++	/// <c>ActionPicker_MouseOut</c> sets to null - so hiding it mid-click nulled the field a line
++	/// before it was dereferenced, and picking a trade action threw a NullReferenceException.
++	///
++	/// So the flag is cleared and nothing else runs. That is all the hover state needs: the
++	/// component will raise MouseOver again next time the pointer is genuinely over it, because it
++	/// no longer believes the pointer is already there. What a MouseOut handler would have done to
++	/// the world - a tint, a cursor - either does not matter on something invisible, or belongs in
++	/// <see cref="OnHoverReleased"/>, which is for the handful of components that change something
++	/// outside themselves.
++	/// </summary>
++	internal void ReleaseHover()
++	{
++		if (!isMouseOver)
++		{
++			return;
++		}
++		isMouseOver = false;
++		OnHoverReleased();
++	}
++
++	/// <summary>
++	/// Called when the hover is given up without the pointer moving - the component was hidden,
++	/// moved, resized or removed out from under it.
++	///
++	/// Empty here on purpose: the point of the silent release is that arbitrary handlers do NOT
++	/// run. Override it only to undo something the component did to the world outside itself, of
++	/// which the mouse cursor is the whole list.
++	/// </summary>
++	protected virtual void OnHoverReleased()
++	{
  	}

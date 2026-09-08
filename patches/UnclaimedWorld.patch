@@ -2042,6 +2042,42 @@
 +	public MessageBox(CommonInterface intf, string title = "MESSAGE", Vector2? size = null)
 +		: base(intf, title, new Point(420, 300), size ?? new Vector2(330f, 250f), Level.MessageBox, PanelType.RegularEdges)
  	{
+--- a/UWGame/ClientSide/Interface/Missions/CreateMissionPanel.cs
++++ b/UWGame/ClientSide/Interface/Missions/CreateMissionPanel.cs
+@@ -1,2 +1,2 @@
+-using System;
++﻿using System;
+ using System.Collections.Generic;
+@@ -464,6 +464,26 @@
+ 	{
+-		HideActionPicker();
+-		MissionStopTemplate missionStopTemplate = actionPickerSourceButton.Tag1 as MissionStopTemplate;
+-		Point absolutePosition = actionPickerSourceButton.AbsolutePosition;
++		// PORT: read the button BEFORE hiding the picker, and check it.
++		//
++		// The order was the other way round, and hiding the picker is exactly what can clear this
++		// field: ActionPicker_MouseOut sets actionPickerSourceButton to null, and the pointer is
++		// over the picker at the moment it is hidden - the click that got us here happened inside
++		// it. So the next line dereferenced null and picking a trade action crashed the game.
++		// Reported by Kastuk, on a mission to Zenig Station.
++		//
++		// The port's own hover release no longer raises MouseOut, which is what made this
++		// reachable every time; this makes it unreachable at all, including from a genuine pointer
++		// movement in the same frame - which is what the studio's ordering was always exposed to.
++		UIComponent sourceButton = actionPickerSourceButton;
+ 		actionPickerSourceButton = null;
++		HideActionPicker();
++		if (sourceButton == null)
++		{
++			return;
++		}
++		MissionStopTemplate missionStopTemplate = sourceButton.Tag1 as MissionStopTemplate;
++		Point absolutePosition = sourceButton.AbsolutePosition;
++		if (missionStopTemplate == null)
++		{
++			return;
++		}
+ 		if (!missionStopTemplate.TravelLocation.ResolveLocation(The.InGameUI.UIAllegiance.SharedKnowledge, out var _, out var allegiance, out var expedition, out var _))
 --- a/UWGame/ClientSide/Interface/OptionsDialog.cs
 +++ b/UWGame/ClientSide/Interface/OptionsDialog.cs
 @@ -1,2 +1,3 @@
