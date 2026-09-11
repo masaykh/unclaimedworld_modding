@@ -21,7 +21,7 @@
 +using UWGame.Port;
 +using UWGame.SimSide;
  
-@@ -8,9 +8,137 @@
+@@ -8,9 +8,138 @@
  {
 +	/// <summary>
 +	/// PORT DEVIATION 13 (see PORTING-NOTES.md). Was <c>Main()</c>, with no arguments at all.
@@ -126,6 +126,7 @@
 +		UWGame.Mods.SelfPreservationMod.RegisterSettings();
 +		UWGame.Mods.MagnificationMod.RegisterSettings();
 +		UWGame.Mods.BalancedDietMod.RegisterSettings();
++		UWGame.Mods.DisassemblyMod.RegisterSettings();
 +		if (UWGame.Mods.UnhiddenMod.Enabled)
 +		{
 +			UWGame.Mods.UnhiddenMod.RegisterSettings();
@@ -163,14 +164,14 @@
 -			MessageBox.Show("It appears that you don't have Windows Media Player installed. This game needs system features bound to Windows Media Player. Please install the Media Feature Pack corresponding to your Windows version to run this game:" + Environment.NewLine + Environment.NewLine + "Windows 7: http://www.microsoft.com/en-US/download/details.aspx?id=16546" + Environment.NewLine + Environment.NewLine + "Windows 8: http://www.microsoft.com/en-US/download/details.aspx?id=30685" + Environment.NewLine + Environment.NewLine + "Windows 8.1: http://www.microsoft.com/en-US/download/details.aspx?id=40744" + Environment.NewLine + Environment.NewLine + "Windows 10: https://www.microsoft.com/en-US/download/details.aspx?id=48231" + Environment.NewLine + Environment.NewLine + "Windows Vista & XP: http://www.microsoft.com/en-US/download/windows-media-player-details.aspx?id=8163", "Missing Windows Media Player", MessageBoxButtons.OK, MessageBoxIcon.Hand);
 +			PlatformWindow.ShowErrorDialog(IntPtr.Zero, effectProblem, "Shaders not set up");
  			return;
-@@ -19,2 +147,6 @@
+@@ -19,2 +148,6 @@
  		unclaimedWorld.Exiting += game_Exiting;
 +		// NOTE: game 1.0.4.8 DELETED the target-monitor placement that used to be here, so the
 +		// port follows it and no longer calls PlatformWindow.PlaceWindowOnMonitor. The helper is
 +		// kept (PORT DEVIATION 10 still covers the codec dialog above), so restoring the
 +		// behaviour is one line if Options.TargetMonitorNumber is wanted back.
  		try
-@@ -29,2 +161,6 @@
+@@ -29,2 +162,6 @@
  
 +	// NOTE: `windowForm_Load` used to sit here - 13 lines of WinForms that positioned the
 +	// window on `Screen.AllScreens[1]` with a hardcoded monitor index of 2. It had no
@@ -2859,7 +2860,7 @@
 -using System;
 +﻿using System;
  using System.Collections.Generic;
-@@ -1565,3 +1565,9 @@
+@@ -1565,3 +1565,14 @@
  	{
 -		return ProcessLoader.InitProcessTypes();
 +		List<ProcessType> list = ProcessLoader.InitProcessTypes();
@@ -2868,9 +2869,14 @@
 +		{
 +			UWGame.Mods.UnhiddenMod.AddProcesses(list);
 +		}
++		// DISASSEMBLY MOD: a Disassemble recipe per assembled tool, weapon and spear, generated
++		// from the recipe that makes it. Here rather than earlier because it reads the finished
++		// process table - including anything the Unhidden Mod just added - and the entity table,
++		// which the queue built several steps ago.
++		UWGame.Mods.DisassemblyMod.AddDisassembly(list);
 +		return list;
  	}
-@@ -8521,2 +8527,10 @@
+@@ -8521,2 +8532,13 @@
  		InitMiscEntityTypes(list);
 +		// UNHIDDEN MOD: adds peat charcoal and retags forge fuel. Hooked here rather than at the
 +		// end of ItemLoader.Init / StructureLoader.Init, which is where the Harmony patch
@@ -2880,8 +2886,11 @@
 +			UWGame.Mods.UnhiddenMod.AddItems(list);
 +			UWGame.Mods.UnhiddenModSmithies.Replace(list);
 +		}
++		// DISASSEMBLY MOD: it needs the entity table when the PROCESS table is built, several
++		// steps later. See DisassemblyMod.CaptureItems for why it cannot read GameData for it.
++		UWGame.Mods.DisassemblyMod.CaptureItems(list);
  		return list;
-@@ -12584,2 +12598,4 @@
+@@ -12584,2 +12606,4 @@
  		});
 +		// MOD: raw meat, vegetables and staples are specialised so a cooked meal is worth making.
 +		UWGame.Mods.BalancedDietMod.AdjustProfiles(list);
@@ -3480,6 +3489,26 @@
 +		// switched on: changing a switch changes the next build, not the tables in memory.
 +		UWGame.Mods.ModSettings.MarkDataBuilt();
  	}
+--- a/UWGame/SimSide/Processes/ProcessType.cs
++++ b/UWGame/SimSide/Processes/ProcessType.cs
+@@ -794,2 +794,17 @@
+ 			}
++			if (parts == null)
++			{
++				// PORT FIX. An object with outputs but no declared Parts fell into the loop below
++				// and dereferenced a null dictionary. Unreachable in the stock tables - every one
++				// of the 33 items the studio gave a disassembly also declares its PartKeys - and
++				// reached immediately by any mod that adds a salvage recipe to something that does
++				// not, which is what UWGame.Mods.DisassemblyMod does for every assembled tool.
++				//
++				// False rather than true: "without losing any parts" is a claim checked against
++				// the parts list, and an object that declares none gives nothing to check it
++				// against. Callers only choose a caption by it - HUDEntityContextMenu offers
++				// PACKING DOWN when true and BEGIN (salvage) when false - so the conservative
++				// answer costs a word and promises nothing that might not be kept.
++				return false;
++			}
+ 			if (Outputs != null)
 --- a/UWGame/SimSide/Resources/ResourceReplenish.cs
 +++ b/UWGame/SimSide/Resources/ResourceReplenish.cs
 @@ -1,2 +1,2 @@

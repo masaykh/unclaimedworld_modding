@@ -11,11 +11,16 @@ namespace UW.Tools.DataExport;
 
 internal static class Program
 {
+    /// <summary>--traces: print a stack trace for each table that fails, not only its name.</summary>
+    private static bool printTraces;
+
     private static int Main(string[] args)
     {
         string target = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
         bool readBack = args.Contains("--read-back");
         bool settingsSelfTest = args.Contains("--settings-selftest");
+        bool disassemblyReport = args.Contains("--disassembly");
+        printTraces = args.Contains("--traces");
 
         // The bundled Unhidden Mod is on by default and its content hooks run inside the data
         // load, so an export made without this reflects the MODDED tables. That is usually what
@@ -48,6 +53,12 @@ internal static class Program
             Console.Error.WriteLine("  --settings-selftest");
             Console.Error.WriteLine("               write, re-read and verify user/ModSettings.xml in <game-dir>,");
             Console.Error.WriteLine("               and load nothing else. Used by build/80-verify-modloader.sh.");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("  --disassembly");
+            Console.Error.WriteLine("               load WITHOUT exporting and list the disassembly recipes the");
+            Console.Error.WriteLine("               DisassemblyMod generated, one per line, with what each gives back.");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("  --traces     print a stack trace for every table that fails to load or export.");
             return 2;
         }
 
@@ -85,6 +96,7 @@ internal static class Program
         UWGame.Mods.SelfPreservationMod.RegisterSettings();
         UWGame.Mods.MagnificationMod.RegisterSettings();
         UWGame.Mods.BalancedDietMod.RegisterSettings();
+        UWGame.Mods.DisassemblyMod.RegisterSettings();
         if (UWGame.Mods.UnhiddenMod.Enabled)
         {
             UWGame.Mods.UnhiddenMod.RegisterSettings();
@@ -103,6 +115,20 @@ internal static class Program
         {
             Console.WriteLine($"==> mods: {UWGame.Mods.ModLoader.Loaded.Count} loaded, " +
                               $"{UWGame.Mods.ModLoader.Failed.Count} failed");
+        }
+
+        PrepareLookups();
+
+        if (disassemblyReport)
+        {
+            // NoSerialize is the mode the GAME loads in: the tables are built by the loaders and
+            // handed straight to GameData, with no XML in the middle. That matters here because
+            // the generated disassembly is computed from the ENTITY table, and entityTypes.xml is
+            // one of the 13 that cannot serialize - in an exporting run the entity table dies
+            // half-built and the report would describe a game nobody is running.
+            int loadRc = Run(Sim.SerializeMode.NoSerialize, "load (no export), for the disassembly report");
+            DisassemblyReport();
+            return loadRc;
         }
 
         int rc = Run(Sim.SerializeMode.WriteAndRead, "export (write, then read each file back)");
@@ -244,6 +270,83 @@ internal static class Program
         return 1;
     }
 
+    /// <summary>
+    /// Creates the ID lookup collections the DATA LOADERS use, which a game gets from
+    /// <c>Sim.CreateLookupCollections</c> and this tool has no Sim to get.
+    ///
+    /// Without this, StructureLoader.Init dies on its first gathering site: the
+    /// <c>GatheringSiteType</c> constructor calls <c>AddToLookup</c>, and
+    /// <c>LookUp&lt;T, Id&gt;.collection</c> is null until someone calls <c>Create()</c>. The
+    /// whole entity table was lost to that one NullReferenceException - which is why
+    /// entityTypes.xml has never exported, and why a mod that reads the item table produced
+    /// nothing here while working perfectly in the game. That asymmetry is the thing worth
+    /// removing: a tool that cannot see half the data cannot gate a change to it.
+    ///
+    /// Only the collections the base data load actually touches are created. The rest belong to a
+    /// running simulation - entities, jobs, allegiances - and this tool never makes one.
+    /// </summary>
+    private static void PrepareLookups()
+    {
+        UWGame.SimSide.GatheringSites.GatheringSiteType.CreateLookupCollection();
+        UWGame.SimSide.AI.Needs.NeedType.CreateLookupCollection();
+    }
+
+    /// <summary>
+    /// Prints every disassembly recipe <c>UWGame.Mods.DisassemblyMod</c> generated on this load,
+    /// one line each, in the order it generated them.
+    ///
+    /// This is the mod's offline witness. Its recipes are computed from the item table and the
+    /// production recipes rather than written down, so "what does it actually produce" is a
+    /// question about a running data load and not about a source file - and answering it by
+    /// launching the game would mean reading twenty tooltips. The format is deliberately flat, one
+    /// line per recipe with the item, the recipe it was derived from and what it gives back, so
+    /// build/80-verify-modloader.sh can assert against it with grep.
+    /// </summary>
+    private static void DisassemblyReport()
+    {
+        Console.WriteLine();
+        var generated = UWGame.Mods.DisassemblyMod.Generated;
+        Console.WriteLine($"==> disassembly: {generated.Count} recipe(s) generated");
+
+        foreach (var process in generated)
+        {
+            string item = process.Inputs != null && process.Inputs.Length > 0
+                ? process.Inputs[0].Entity : "?";
+
+            var outputs = new List<string>();
+            if (process.Outputs != null)
+            {
+                foreach (var output in process.Outputs)
+                {
+                    outputs.Add(output.EntityTypeToCreate + " x" + (output.Amount?.NoOfItems ?? 1));
+                }
+            }
+
+            // Whether the item actually points AT the recipe. Generating one and failing to hang
+            // it on NonLivingType.SalvageProcess would give a recipe no player can ever reach,
+            // and nothing else in this report would show the difference.
+            string link = "link=BROKEN";
+            if (GameData.Instance.AllEntityTypes.TryGetValue(item, out var entityType)
+                && entityType.NonLivingType != null
+                && entityType.NonLivingType.SalvageProcess == process.KeyName)
+            {
+                link = "link=ok";
+            }
+
+            // Invariant, because the gate greps these numbers and a machine with a comma for a
+            // decimal point would print days=0,01 and match nothing.
+            string days = (process.WorkOrTimeNeeded?.DaysNeeded ?? 0f).ToString(
+                "0.########", System.Globalization.CultureInfo.InvariantCulture);
+            // salvage= is not decoration: a generated recipe that forgot IsSalvageProcess would be
+            // registered as a way to PRODUCE its outputs (GameData.AddProcessToProductionGraph
+            // sorts by that flag), so a colony ordered to make sticks could answer by taking its
+            // tools apart.
+            Console.WriteLine($"    {process.KeyName}  from={item}  skill={process.RequiredSkill}  " +
+                              $"days={days}  {link}  salvage={(process.IsSalvageProcess ? "yes" : "NO")}  " +
+                              $"out={string.Join(", ", outputs)}");
+        }
+    }
+
     private static int Run(Sim.SerializeMode mode, string what)
     {
         Console.WriteLine("==> " + what);
@@ -299,6 +402,12 @@ internal static class Program
                 failures.Add((before, root.GetType().Name + ": " + root.Message));
                 Console.WriteLine($"    FAIL {before}");
                 Console.WriteLine($"         {root.GetType().Name}: {Truncate(root.Message, 150)}");
+                if (printTraces)
+                {
+                    // Which table failed is the tool.s contract; WHERE it failed is what a port
+                    // maintainer needs, and two missing lookup collections were found with this.
+                    Console.WriteLine(root.StackTrace);
+                }
 
                 var after = (DataLoaderQueueState)queueStateField.GetValue(loader);
                 if (after != before)

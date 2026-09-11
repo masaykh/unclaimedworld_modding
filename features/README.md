@@ -13,6 +13,7 @@ selectable, each attributed to whoever wrote it.
 | `30-ui-fixes` | community modder | stockpile categories sorted ascending |
 | `40-items-and-recipes` | community modder | both smithies retagged to accept the `fuelForForge` tag rather than `item:charcoal` by key |
 | `50-charcoal-from-peat` | this port | `makeCharcoalFromPeat` — **real** `item:charcoal` from dry peat — and peat-fuelled variants of the three builds that start with a fuel load |
+| `60-disassembly` | this port | a **Disassemble** action for every assembled tool, weapon and spear, generated from the recipe that makes each; textile comes apart into cotton string |
 
 ## Why 40 and 50 are separate
 
@@ -39,15 +40,18 @@ Since 2026-09-05 the content features are also switchable **without rebuilding**
 | `unhidden.charcoalFromPeat` | the `makeCharcoalFromPeat` recipe (`50-`) |
 | `unhidden.peatBuilding` | the peat-fuelled build variants (`50-`) |
 | `unhidden.experimental` | a spare switch, wired to nothing |
+| `disassembly.generate` | the generated disassembly recipes (`60-`) |
 
 A save records which of these were on when it was written, is marked **MODDED** in the save list,
 and offers to load with the settings it was made with. See the main `README.md`.
 
 ## Save compatibility
 
-`50-` adds `ProcessType`s to the tables the snapshot serializer resolves against. **A save made
-with them may not load without them**, and one containing peat
-charcoal certainly will not. `10-`, `20-` and `30-` are interface-only and carry no such risk.
+`50-` and `60-` add `ProcessType`s to the tables the snapshot serializer resolves against. **A save
+made with them may not load without them**, and one containing peat charcoal certainly will not.
+`60-` adds 21 such keys, one per generated disassembly, and a save with a disassembly job in
+progress names the one it is running. `10-`, `20-` and `30-` are interface-only and carry no such
+risk.
 
 ## Structure
 
