@@ -127,6 +127,10 @@ internal static class Program
             // one of the 13 that cannot serialize - in an exporting run the entity table dies
             // half-built and the report would describe a game nobody is running.
             int loadRc = Run(Sim.SerializeMode.NoSerialize, "load (no export), for the disassembly report");
+            if (!ValidateDataComplete())
+            {
+                return 1;
+            }
             DisassemblyReport();
             return loadRc;
         }
@@ -289,6 +293,42 @@ internal static class Program
     {
         UWGame.SimSide.GatheringSites.GatheringSiteType.CreateLookupCollection();
         UWGame.SimSide.AI.Needs.NeedType.CreateLookupCollection();
+        UWGame.SimSide.Processes.ToolTypeCombination.CreateLookupCollection();
+        UWGame.SimSide.Entities.ReplenishActionType.CreateLookupCollection();
+    }
+
+    /// <summary>
+    /// Runs the validation pass the GAME runs after the tables are built -
+    /// <c>GameData.PostDataCompleteInitialize</c>, which every data type's
+    /// <c>PostDataCompleteValidate</c> hangs off.
+    ///
+    /// WHY THIS IS HERE, and it is the whole reason: building the tables is not the same as
+    /// surviving them. The first version of the disassembly mod built 21 perfectly good recipes
+    /// and then took the game down on the next screen, in
+    /// <c>ProcessType.PostDataCompleteValidate</c>, because the validator walks
+    /// <c>Inputs[0].EntityType.Parts</c> for a salvage process and every item the studio gave a
+    /// disassembly to happens to declare its <c>PartKeys</c>. A tool that stopped at "the tables
+    /// built" reported success on a build that could not load a save. This call is where the
+    /// difference shows up, and it costs a few hundred milliseconds.
+    ///
+    /// Returns false if it throws, because a crash here is a crash in the player's game.
+    /// </summary>
+    private static bool ValidateDataComplete()
+    {
+        Console.WriteLine("==> validating (the pass Sim.QueueGameDataAndSimInit runs)");
+        try
+        {
+            GameData.Instance.PostDataCompleteInitialize();
+            Console.WriteLine("    ok - the tables survive the game's own validation");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Exception root = ex.GetBaseException();
+            Console.WriteLine("    FAIL " + root.GetType().Name + ": " + root.Message);
+            Console.WriteLine(root.StackTrace);
+            return false;
+        }
     }
 
     /// <summary>

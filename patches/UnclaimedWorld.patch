@@ -3509,6 +3509,23 @@
 +				return false;
 +			}
  			if (Outputs != null)
+@@ -916,3 +931,15 @@
+ 				}
+-				if (Outputs != null)
++				// PORT FIX. `Parts` is null for any item that does not declare PartKeys, and the
++				// loop below walks it. Unreachable in the stock tables for the same reason as the
++				// sibling fix in GetIsSalvageWithoutWaste - all 33 items the studio gave a
++				// disassembly also declare their parts - and it took the game down on the next
++				// screen for anyone running UWGame.Mods.DisassemblyMod, which gives a salvage
++				// recipe to tools that declare none.
++				//
++				// Skipping the check rather than reporting an error is the honest answer: these
++				// rules ask whether the outputs match the item's declared parts, and an item with
++				// no parts list is not failing them, it is outside them. What a generated
++				// disassembly gives back is decided by the recipe that made the item, and
++				// DisassemblyMod never hands back more than that recipe consumed.
++				if (Outputs != null && Inputs[0].EntityType.Parts != null)
+ 				{
 --- a/UWGame/SimSide/Resources/ResourceReplenish.cs
 +++ b/UWGame/SimSide/Resources/ResourceReplenish.cs
 @@ -1,2 +1,2 @@

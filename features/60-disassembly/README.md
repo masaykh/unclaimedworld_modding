@@ -78,13 +78,24 @@ complexity rule alone would have taken a fired jar apart into its salt glaze and
 consumed, and an input to about 45 recipes, so recovered wood is worth having rather than being a
 token that only burns.
 
-## One port fix comes with it
+## Two port fixes come with it - the same bug, in two places
 
-`ProcessType.GetIsSalvageWithoutWaste` dereferenced `Inputs[0].EntityType.NonLivingType.Parts`
-with no null check. Unreachable in the stock tables — all 33 items with a disassembly also declare
-their `PartKeys` — and reached immediately by any mod that gives a salvage recipe to something that
-does not. It answers `false` there now; callers only choose a caption by it (PACKING DOWN against
-BEGIN).
+The studio reads a salvaged item's `Parts` list without checking it for null. All 33 items they
+gave a disassembly to also declare their `PartKeys`, so neither of these can fire in the stock
+game, and both fire on the first generated recipe.
+
+* `ProcessType.GetIsSalvageWithoutWaste` answers `false` for an item with no parts list now;
+  callers only choose a caption by it (PACKING DOWN against BEGIN).
+* `ProcessType.PostDataCompleteValidate` walked the same list to check each output against it, and
+  this one was **fatal** - the tables built correctly and the game died on the next screen, inside
+  the validation pass `Sim.QueueGameDataAndSimInit` runs. Reported by Kastuk on 2026-09-12, fixed
+  the same day. The check is skipped when the item declares no parts: the rule asks whether the
+  outputs match the declared parts, and an item with none is outside the rule rather than failing
+  it. What a generated disassembly gives back is decided by the recipe that made the item.
+
+The second one is why `dataexport --disassembly` now runs `GameData.PostDataCompleteInitialize` -
+the pass that crashed - before it prints anything. Building the tables and surviving them are
+different things, and the tool used to stop at the first.
 
 ## Verified, with no launch
 
